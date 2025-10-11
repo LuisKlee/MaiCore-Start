@@ -7,6 +7,7 @@
 # Python cache files
 **/__pycache__/
 **/*.pyc
+*.pyc
 
 # --- Configuration Files (User Specific) ---
 # Main user configuration, should not be versioned
@@ -21,3 +22,13 @@
 # --- Other ---
 # A test directory that should be ignored
 test-but-napcat-on-lunix
+
+# --- 忽略日志文件 ---
+*.jsonl
+log/
+
+## --- 忽略程序配置文件 ---
+config/
+config.toml
+config_UI.json
+P-config.toml

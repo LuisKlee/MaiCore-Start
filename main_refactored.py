@@ -18,7 +18,8 @@ from src.modules.launcher import launcher
 from src.modules.config_manager import config_mgr
 from src.modules.knowledge import knowledge_builder
 from src.utils.common import setup_console
-
+from src.core.p_config import p_config_manager
+ 
 # 设置日志
 setup_logging()
 logger = get_logger(__name__)
@@ -318,6 +319,86 @@ class MaiMaiLauncher:
 
         ui.pause()
 
+    def handle_misc_menu(self):
+        """处理杂项菜单"""
+        while True:
+            ui.show_misc_menu()
+            choice = ui.get_choice("请选择操作", ["A", "B", "Q"])
+            
+            if choice == "Q":
+                break
+            elif choice == "A":
+                self.handle_about_menu()
+            elif choice == "B":
+                self.handle_program_settings()
+
+    def handle_program_settings(self):
+        """处理程序设置"""
+        while True:
+            # 重新加载颜色以反映实时变化
+            from src.ui.theme import COLORS
+            current_colors = p_config_manager.get_theme_colors()
+            current_log_days = p_config_manager.get("logging.log_rotation_days", 30)
+            ui.show_program_settings_menu(current_colors, current_log_days)
+            
+            choice = ui.get_choice("请选择操作", ["L", "C", "R", "Q"])
+            
+            if choice == "Q":
+                break
+            
+            elif choice == "L":
+                # 修改日志保留天数
+                while True:
+                    days_input = ui.get_input("请输入新的日志文件保留天数 (例如: 30): ")
+                    try:
+                        new_days = int(days_input)
+                        if new_days > 0:
+                            p_config_manager.set("logging.log_rotation_days", new_days)
+                            p_config_manager.save()
+                            ui.print_success(f"日志保留天数已更新为 {new_days} 天。")
+                            ui.pause()
+                            break
+                        else:
+                            ui.print_error("请输入一个大于0的整数。")
+                    except ValueError:
+                        ui.print_error("无效输入，请输入一个整数。")
+
+            elif choice == "C":
+                color_keys = list(current_colors.keys())
+                while True:
+                    idx_input = ui.get_input("请输入要修改的颜色选项数字 (或 Q 返回): ")
+                    if idx_input.upper() == 'Q':
+                        break
+                    
+                    try:
+                        idx = int(idx_input) - 1
+                        if 0 <= idx < len(color_keys):
+                            key_to_edit = color_keys[idx]
+                            new_value = ui.get_input(f"请输入 '{key_to_edit}' 的新颜色值 (例如: #FF00FF 或 red): ")
+                            p_config_manager.set(f"theme.{key_to_edit}", new_value)
+                            p_config_manager.save()
+                            # 动态更新导入的COLORS
+                            COLORS[key_to_edit] = new_value
+                            ui.print_success(f"'{key_to_edit}' 已更新为 '{new_value}'")
+                            ui.pause()
+                            break
+                        else:
+                            ui.print_error("无效的选项数字。")
+                    except ValueError:
+                        ui.print_error("请输入有效的数字。")
+
+            elif choice == "R":
+                if ui.confirm("确定要将所有颜色恢复为默认设置吗？此操作不可逆。"):
+                    if p_config_manager.reset_to_default():
+                        # 动态更新导入的COLORS
+                        default_colors = p_config_manager.DEFAULT_CONFIG['theme']
+                        for k, v in default_colors.items():
+                            COLORS[k] = v
+                        ui.print_success("已成功恢复默认颜色设置。")
+                    else:
+                        ui.print_error("恢复默认设置失败。")
+                    ui.pause()
+
     def handle_process_status(self):
         """处理进程状态查看，支持自动刷新和交互式命令（最终优化版）。"""
         import msvcrt
@@ -505,7 +586,7 @@ class MaiMaiLauncher:
                 elif choice == "G":
                     self.handle_process_status()
                 elif choice == "H":
-                    self.handle_about_menu()
+                    self.handle_misc_menu()
                 else:
                     ui.print_error("无效选项")
                     ui.countdown(1)

@@ -36,21 +36,36 @@ class UI:
     def show_main_menu(self):
         """显示主菜单"""
         self.clear_screen()
+        logger.info("显示主菜单")
         self.menus.show_main_menu()
 
     def show_config_menu(self):
         """显示配置菜单"""
         self.clear_screen()
+        logger.info("显示配置菜单")
         self.menus.show_config_menu()
 
     def show_config_management_menu(self):
         """显示统一的配置管理菜单"""
         self.clear_screen()
+        logger.info("显示统一配置管理菜单")
         self.menus.show_config_management_menu()
+
+    def show_misc_menu(self):
+        """显示杂项菜单"""
+        self.clear_screen()
+        logger.info("显示杂项菜单")
+        self.menus.show_misc_menu()
 
     def show_config_check_menu(self):
         """显示配置检查菜单（保持兼容性）"""
         self.show_config_management_menu()
+
+    def show_program_settings_menu(self, current_colors: Dict[str, Any], current_log_days: int):
+        """显示程序设置菜单"""
+        self.clear_screen()
+        logger.info("显示程序设置菜单")
+        self.menus.show_program_settings_menu(current_colors, current_log_days)
 
     def show_plugin_menu(self):
         """显示插件管理菜单"""
@@ -121,28 +136,40 @@ class UI:
         self.components.show_config_details(config_name, config)
 
     def print_success(self, message: str):
+        logger.info(f"输出成功信息: {message}")
         self.console.print(f"{self.symbols['success']} {message}", style=self.colors["success"])
     
     def print_error(self, message: str):
+        logger.error(f"输出错误信息: {message}")
         self.console.print(f"{self.symbols['error']} {message}", style=self.colors["error"])
     
     def print_warning(self, message: str):
+        logger.warning(f"输出警告信息: {message}")
         self.console.print(f"{self.symbols['warning']} {message}", style=self.colors["warning"])
     
     def print_info(self, message: str):
+        logger.info(f"输出提示信息: {message}")
         self.console.print(f"{self.symbols['info']} {message}", style=self.colors["info"])
 
     def print_attention(self, message: str):
+        logger.warning(f"输出注意信息: {message}")
         self.console.print(f"{self.symbols['attention']} {message}", style=self.colors["attention"])
     
     def get_input(self, prompt_text: str, default: str = "") -> str:
-        return Prompt.ask(prompt_text, default=default, console=self.console).strip().strip('"')
+        logger.info(f"请求用户输入: {prompt_text}", default=default)
+        user_input = Prompt.ask(prompt_text, default=default, console=self.console).strip().strip('"')
+        logger.info(f"用户输入: {user_input}")
+        return user_input
     
     def get_choice(self, prompt_text: str, choices: list) -> str:
+        # get_input 已经被日志记录，这里不再重复
         return self.get_input(prompt_text).upper()
     
     def confirm(self, prompt_text: str) -> bool:
-        return Confirm.ask(prompt_text, console=self.console)
+        logger.info(f"请求用户确认: {prompt_text}")
+        user_confirmation = Confirm.ask(prompt_text, console=self.console)
+        logger.info(f"用户确认结果: {'是' if user_confirmation else '否'}")
+        return user_confirmation
     
     def get_confirmation(self, prompt_text: str) -> bool:
         return self.confirm(prompt_text)

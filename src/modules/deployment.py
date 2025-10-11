@@ -1412,7 +1412,12 @@ pause
             ui.print_info("MoFox_bot无需MongoDB，已自动跳过")
 
         # 询问是否需要安装WebUI
-        install_webui = ui.confirm("是否需要安装WebUI？（Web聊天室界面）(目前处于预览版, 可能不稳定)")
+        install_webui = False
+        install_mofox_admin_ui = False
+        if bot_type == "MaiBot":
+            install_webui = ui.confirm("是否需要安装WebUI？（Web聊天室界面）(目前处于预览版, 可能不稳定)")
+        elif bot_type == "MoFox_bot":
+            install_mofox_admin_ui = ui.confirm("是否需要安装MoFox_bot后台管理WebUI？")
 
         # 获取基本信息
         existing_configs = config_manager.get_all_configurations()
@@ -1473,7 +1478,8 @@ pause
             "install_napcat": install_napcat,
             "install_mongodb": install_mongodb,
             "mongodb_path": mongodb_path,  # 直接保存MongoDB路径
-            "install_webui": install_webui
+            "install_webui": install_webui,
+            "install_mofox_admin_ui": install_mofox_admin_ui
         }
     
     def _confirm_deployment(self, deploy_config: Dict) -> bool:
@@ -1512,8 +1518,10 @@ pause
             ui.console.print(f"  └─ MongoDB路径：{deploy_config['mongodb_path']}")
         
         # WebUI
-        webui_status = "✅ 安装" if deploy_config.get("install_webui") else "❌ 跳过"
-        ui.console.print(f"WebUI：{webui_status}")
+        webui_name = "MoFox_bot后台管理WebUI" if deploy_config.get("bot_type") == "MoFox_bot" else "WebUI"
+        webui_installed = deploy_config.get("install_webui", False) or deploy_config.get("install_mofox_admin_ui", False)
+        webui_status = "✅ 安装" if webui_installed else "❌ 跳过"
+        ui.console.print(f"{webui_name}：{webui_status}")
         
         # 显示预计安装时间
         ui.console.print("\n[⏱️ 预计安装时间]", style=ui.colors["info"])
@@ -1522,7 +1530,8 @@ pause
             deploy_config.get("install_adapter", False),
             deploy_config.get("install_napcat", False),
             deploy_config.get("install_mongodb", False),
-            deploy_config.get("install_webui", False)
+            deploy_config.get("install_webui", False),
+            deploy_config.get("install_mofox_admin_ui", False)
         ])
         estimated_time = install_components * 2  # 每个组件约2分钟
         ui.console.print(f"预计耗时：{estimated_time}-{estimated_time + 5} 分钟")
@@ -1986,15 +1995,19 @@ pause
             paths["napcat_path"] = self._install_napcat(deploy_config, paths[bot_path_key])
 
         # 步骤4：安装WebUI
-        if deploy_config.get("install_webui"):
+        if bot_type == "MaiBot" and deploy_config.get("install_webui"):
             success, paths["webui_path"] = self._check_and_install_webui(deploy_config, paths[bot_path_key])
             if not success:
                 ui.print_warning("WebUI安装检查失败，但部署将继续...")
+        elif bot_type == "MoFox_bot" and deploy_config.get("install_mofox_admin_ui"):
+            success, paths["webui_path"] = self._install_mofox_admin_ui(deploy_config)
+            if not success:
+                ui.print_warning("MoFox_bot后台管理WebUI安装失败，但部署将继续...")
 
         # 步骤5：设置Python环境
         paths["venv_path"] = self._setup_python_environment(paths[bot_path_key], paths["adapter_path"])
         
-        if paths["webui_path"] and paths["venv_path"]:
+        if bot_type == "MaiBot" and paths["webui_path"] and paths["venv_path"]:
             ui.console.print("\n[🔄 在虚拟环境中安装WebUI后端依赖]", style=ui.colors["primary"])
             webui_installer.install_webui_backend_dependencies(paths["webui_path"], paths["venv_path"])
 
@@ -2025,7 +2038,8 @@ pause
             "install_adapter": bool(adapter_path and adapter_path not in ["无需适配器", "跳过适配器安装"]),
             "install_napcat": deploy_config.get("install_napcat", False),
             "install_mongodb": bool(deploy_config.get("mongodb_path", "")),
-            "install_webui": deploy_config.get("install_webui", False)
+            "install_webui": deploy_config.get("install_webui", False),
+            "install_mofox_admin_ui": deploy_config.get("install_mofox_admin_ui", False)
         }
         
         new_config = {
@@ -2067,7 +2081,9 @@ pause
         ui.console.print(f"  • 适配器：{'✅' if install_options['install_adapter'] else '❌'}")
         ui.console.print(f"  • NapCat：{'✅' if install_options['install_napcat'] else '❌'}")
         ui.console.print(f"  • MongoDB：{'✅' if install_options['install_mongodb'] else '❌'}")
-        ui.console.print(f"  • WebUI：{'✅' if install_options['install_webui'] else '❌'}")
+        webui_name = "MoFox_bot后台管理WebUI" if bot_type == "MoFox_bot" else "WebUI"
+        webui_installed = install_options.get('install_webui', False) or install_options.get('install_mofox_admin_ui', False)
+        ui.console.print(f"  • {webui_name}：{'✅' if webui_installed else '❌'}")
         
         ui.print_success("✅ 部署配置完成")
         logger.info("配置创建成功", config=new_config)
@@ -2076,13 +2092,14 @@ pause
     def _show_post_deployment_info(self, bot_path: str, bot_config: Dict):
         """显示部署后的信息并提供打开配置文件的选项"""
         version_name = bot_config.get("selected_version", {}).get("name", "")
+        bot_type = bot_config.get("bot_type", "MaiBot")
         from ..utils.version_detector import compare_versions
         from ..utils.common import open_files_in_editor
 
         is_modern_config = compare_versions(version_name, "0.10.0") >= 0
 
         ui.console.print("\n[📝 后续配置提醒]", style=ui.colors["info"])
-        if is_modern_config:
+        if is_modern_config or bot_type == "MoFox_bot":
             ui.console.print("1. 在 'config/model_config.toml' 文件中配置您的API密钥。", style=ui.colors["attention"])
         else:
             ui.console.print("1. 在根目录的 '.env' 文件中配置您的APIKey（MaiCore的0.10.0及以上版本已经转移至model_config.toml文件中，LPMM知识库构建所需模型亦在此文件中配置）。", style=ui.colors["attention"])
@@ -2101,7 +2118,7 @@ pause
             files_to_open = []
             
             # 确定要打开的配置文件
-            if is_modern_config:
+            if is_modern_config or bot_type == "MoFox_bot":
                 model_config = os.path.join(bot_path, "config", "model_config.toml")
                 if os.path.exists(model_config):
                     files_to_open.append(model_config)
@@ -2470,6 +2487,91 @@ pause
             logger.error("WebUI安装检查失败", error=str(e))
             return False, ""
     
+
+    def _install_mofox_admin_ui(self, deploy_config: Dict) -> Tuple[bool, str]:
+        """安装MoFox_bot后台管理WebUI"""
+        ui.console.print("\n[🦊 安装MoFox_bot后台管理WebUI]", style=ui.colors["primary"])
+        
+        try:
+            # First, check for NodeJS
+            ui.print_info("检查Node.js环境...")
+            node_installed, _ = webui_installer.check_nodejs_installed()
+            npm_installed, _ = webui_installer.check_npm_installed()
+
+            if not node_installed or not npm_installed:
+                ui.print_warning("未检测到Node.js或npm")
+                ui.print_info("WebUI需要Node.js环境支持")
+                if ui.confirm("是否自动安装Node.js？"):
+                    if not webui_installer.install_nodejs():
+                        ui.print_error("Node.js安装失败，跳过WebUI安装")
+                        return False, ""
+                else:
+                    ui.print_info("已跳过WebUI安装")
+                    return True, ""  # Not a failure, just skipped.
+
+            install_dir = deploy_config["install_dir"]
+            
+            ui.print_info("正在下载MoFox_bot后台管理WebUI...")
+            
+            download_url = "https://github.com/MoFox-Studio/MoFox-UI/archive/refs/heads/main.zip"
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                archive_path = os.path.join(temp_dir, "mofox_ui.zip")
+                
+                if not self.download_file(download_url, archive_path):
+                    ui.print_error("MoFox_bot WebUI下载失败")
+                    return False, ""
+
+                # 解压
+                if not self.extract_archive(archive_path, temp_dir):
+                    ui.print_error("MoFox_bot WebUI解压失败")
+                    return False, ""
+                
+                # 查找解压后的目录
+                extracted_dirs = [d for d in os.listdir(temp_dir) if os.path.isdir(os.path.join(temp_dir, d)) and "MoFox-UI" in d]
+                if not extracted_dirs:
+                    ui.print_error("解压后未找到MoFox-UI目录")
+                    return False, ""
+                
+                source_dir = os.path.join(temp_dir, extracted_dirs[0])
+                
+                # 重命名为 'webui' 并移动
+                webui_path = os.path.join(install_dir, "webui")
+                if os.path.exists(webui_path):
+                    ui.print_warning(f"目录 '{webui_path}' 已存在，将覆盖。")
+                    shutil.rmtree(webui_path)
+                
+                shutil.move(source_dir, webui_path)
+                ui.print_success(f"WebUI源码已移动到: {webui_path}")
+
+                # 安装依赖
+                ui.print_info("正在安装WebUI依赖 (npm install)...")
+                
+                result = subprocess.run(
+                    ["npm", "install"],
+                    cwd=webui_path,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8'
+                )
+
+                if result.returncode == 0:
+                    ui.print_success("✅ WebUI依赖安装完成")
+                    logger.info("MoFox WebUI依赖安装成功", path=webui_path)
+                    return True, webui_path
+                else:
+                    ui.print_error("❌ WebUI依赖安装失败")
+                    ui.console.print(result.stdout)
+                    ui.console.print(result.stderr)
+                    logger.error("MoFox WebUI依赖安装失败", error=result.stderr)
+                    return True, webui_path
+
+        except Exception as e:
+            ui.print_error(f"MoFox_bot WebUI安装失败：{str(e)}")
+            logger.error("MoFox_bot WebUI安装失败", error=str(e))
+            return False, ""
+
 
 # 全局部署管理器实例
 deployment_manager = DeploymentManager()

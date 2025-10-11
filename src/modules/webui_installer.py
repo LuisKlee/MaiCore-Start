@@ -97,12 +97,10 @@ class WebUIInstaller:
             
             if platform.system() == "Windows":
                 return self._install_nodejs_windows()
-            elif platform.system() == "Darwin":
-                return self._install_nodejs_macos()
-            elif platform.system() == "Linux":
-                return self._install_nodejs_linux()
             else:
-                ui.print_error("不支持的操作系统")
+                ui.print_error("当前操作系统不支持自动安装Node.js，请手动安装")
+                ui.print_info("请访问 https://nodejs.org/ 下载并安装Node.js")
+                logger.warning("不支持的操作系统", os=platform.system())
                 return False
                 
         except Exception as e:
@@ -115,24 +113,20 @@ class WebUIInstaller:
         try:
             ui.print_info("正在下载Node.js Windows安装包...")
             
-            # 下载Node.js LTS版本
-            nodejs_url = "https://nodejs.org/dist/v18.19.1/node-v18.19.1-x64.msi"
+            nodejs_url = "https://nodejs.org/dist/v22.20.0/node-v22.20.0-x64.msi"
             
             with tempfile.TemporaryDirectory() as temp_dir:
                 installer_path = os.path.join(temp_dir, "nodejs_installer.msi")
                 
-                response = requests.get(nodejs_url, stream=True, timeout=60, verify=False)
-                response.raise_for_status()
-                
-                with open(installer_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                
+                if not self.download_file(nodejs_url, installer_path):
+                    ui.print_error("Node.js安装包下载失败")
+                    return False
+
                 ui.print_info("正在安装Node.js...")
                 ui.print_warning("请在弹出的安装程序中完成Node.js安装")
                 
-                # 启动安装程序
-                subprocess.run([installer_path], check=True)
+                # 使用 os.startfile 在 Windows 上更可靠，可以避免阻塞
+                os.startfile(installer_path)
                 
                 # 等待用户完成安装
                 ui.pause("安装完成后按回车继续...")
@@ -142,52 +136,6 @@ class WebUIInstaller:
                 
         except Exception as e:
             ui.print_error(f"Windows Node.js安装失败：{str(e)}")
-            return False
-    
-    def _install_nodejs_macos(self) -> bool:
-        """在macOS上安装Node.js"""
-        try:
-            # 尝试使用Homebrew安装
-            ui.print_info("尝试使用Homebrew安装Node.js...")
-            
-            try:
-                subprocess.run(["brew", "install", "node"], check=True)
-                ui.print_success("Node.js安装完成")
-                return True
-            except subprocess.CalledProcessError:
-                ui.print_warning("Homebrew安装失败，请手动安装Node.js")
-                ui.print_info("请访问 https://nodejs.org/ 下载并安装Node.js")
-                return False
-                
-        except Exception as e:
-            ui.print_error(f"macOS Node.js安装失败：{str(e)}")
-            return False
-    
-    def _install_nodejs_linux(self) -> bool:
-        """在Linux上安装Node.js"""
-        try:
-            ui.print_info("正在安装Node.js...")
-            
-            # 尝试使用包管理器安装
-            try:
-                # 尝试apt-get (Ubuntu/Debian)
-                subprocess.run(["sudo", "apt-get", "update"], check=True)
-                subprocess.run(["sudo", "apt-get", "install", "-y", "nodejs", "npm"], check=True)
-                ui.print_success("Node.js安装完成")
-                return True
-            except subprocess.CalledProcessError:
-                try:
-                    # 尝试yum (CentOS/RHEL)
-                    subprocess.run(["sudo", "yum", "install", "-y", "nodejs", "npm"], check=True)
-                    ui.print_success("Node.js安装完成")
-                    return True
-                except subprocess.CalledProcessError:
-                    ui.print_warning("自动安装失败，请手动安装Node.js")
-                    ui.print_info("请访问 https://nodejs.org/ 下载并安装Node.js")
-                    return False
-                    
-        except Exception as e:
-            ui.print_error(f"Linux Node.js安装失败：{str(e)}")
             return False
     
     def _verify_nodejs_installation(self) -> bool:
@@ -213,6 +161,80 @@ class WebUIInstaller:
             ui.print_error(f"Node.js验证失败：{str(e)}")
             return False
     
+    def download_file(self, url: str, filename: str, max_retries: int = 3) -> bool:
+        """下载文件并显示进度，支持重试"""
+        if hasattr(self, '_offline_mode') and self._offline_mode:
+            ui.print_error("当前处于离线模式，无法下载文件")
+            return False
+            
+        # 检查是否有代理设置
+        proxies = {}
+        # 从环境变量获取代理设置
+        http_proxy = os.environ.get('HTTP_PROXY') or os.environ.get('http_proxy')
+        https_proxy = os.environ.get('HTTPS_PROXY') or os.environ.get('https_proxy')
+        if http_proxy:
+            proxies['http'] = http_proxy
+        if https_proxy:
+            proxies['https'] = https_proxy
+            
+        if proxies:
+            ui.print_info(f"使用代理设置: {proxies}")
+        
+        # 重试逻辑
+        for retry in range(max_retries):
+            try:
+                ui.print_info(f"正在下载 {os.path.basename(filename)}... (尝试 {retry + 1}/{max_retries})")
+                logger.info("开始下载文件", url=url, filename=filename, retry=retry+1)
+                
+                response = requests.get(url, stream=True, proxies=proxies, timeout=30, verify=False)
+                response.raise_for_status()
+                
+                total_size = int(response.headers.get('content-length', 0))
+                
+                with open(filename, 'wb') as file, tqdm(
+                    desc=os.path.basename(filename),
+                    total=total_size,
+                    unit='iB',
+                    unit_scale=True,
+                    unit_divisor=1024,
+                ) as progress_bar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            file.write(chunk)
+                            progress_bar.update(len(chunk))
+                
+                # 验证文件大小
+                if total_size > 0:
+                    actual_size = os.path.getsize(filename)
+                    if actual_size < total_size * 0.98:  # 允许2%的误差
+                        ui.print_warning(f"文件下载不完整: 预期 {total_size} 字节, 实际 {actual_size} 字节")
+                        if retry < max_retries - 1:
+                            ui.print_info("将重试下载...")
+                            continue
+                        else:
+                            ui.print_error("达到最大重试次数，文件可能不完整")
+                            return False
+                
+                ui.print_success(f"{os.path.basename(filename)} 下载完成")
+                logger.info("文件下载完成", filename=filename)
+                return True
+                
+            except requests.RequestException as e:
+                ui.print_warning(f"下载失败 (尝试 {retry + 1}/{max_retries}): {str(e)}")
+                logger.warning("文件下载失败", error=str(e), url=url, retry=retry+1)
+                
+                if retry < max_retries - 1:
+                    ui.print_info("3秒后重试...")
+                    import time
+                    time.sleep(3)
+                    continue
+                else:
+                    ui.print_error("达到最大重试次数，下载失败")
+                    return False
+                    
+        ui.print_error(f"下载失败：达到最大重试次数 {max_retries}")
+        logger.error("文件下载失败", url=url)
+        return False
     def get_webui_branches(self) -> List[Dict]:
         """获取WebUI分支列表"""
         try:

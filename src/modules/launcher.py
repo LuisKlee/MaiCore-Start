@@ -431,7 +431,9 @@ class _AdapterComponent(_LaunchComponent):
         
         python_cmd = MaiLauncher._get_python_command(self.config, adapter_path)
         command = f"{python_cmd} main.py"
-        title = f"麦麦适配器 - {self.config.get('version_path', 'N/A')}"
+        bot_nickname = self.config.get('nickname_path', '适配器')
+        version = self.config.get('version_path', 'N/A')
+        title = f"{bot_nickname} - 适配器 v{version}"
         return command, adapter_path, title
     
     def start(self, process_manager: _ProcessManager) -> bool:
@@ -491,7 +493,9 @@ class _WebUIComponent(_LaunchComponent):
 
 class _MaiComponent(_LaunchComponent):
     def __init__(self, config: Dict[str, Any]):
-        super().__init__("麦麦本体", config)
+        bot_type = config.get("bot_type", "MaiBot")
+        component_name = "MoFox本体" if bot_type == "MoFox_bot" else "麦麦本体"
+        super().__init__(component_name, config)
         self.is_enabled = True # 本体总是启用
 
     def get_launch_details(self) -> Optional[Tuple[str, str, str]]:
@@ -519,11 +523,12 @@ class _MaiComponent(_LaunchComponent):
                 start_file = "bot.py"
             command = f"{python_cmd} {start_file}"
             
-        title = f"麦麦本体 - {version}"
+        bot_nickname = self.config.get('nickname_path', bot_type)
+        title = f"{bot_nickname} - {self.name} v{version}"
         return command, mai_path, title
     
     def start(self, process_manager: _ProcessManager) -> bool:
-        ui.print_info("尝试启动麦麦本体...")
+        ui.print_info(f"尝试启动{self.name}...")
         return super().start(process_manager)
 
 
@@ -623,9 +628,12 @@ class MaiLauncher:
         
         # 打印组件状态
         for comp in self._components.values():
-            if comp.name != "麦麦本体":
+            if "本体" not in comp.name:
                 ui.console.print(f"  • {comp.name}: {'✅ 可用' if comp.is_enabled else '❌ 未配置'}")
-        ui.console.print(f"  • 麦麦本体: ✅ 可用")
+        # Find and print the main component last
+        main_comp = next((c for c in self._components.values() if "本体" in c.name), None)
+        if main_comp:
+            ui.console.print(f"  • {main_comp.name}: ✅ 可用")
 
         # 根据 bot_type 定义菜单
         if bot_type == "MaiBot":
