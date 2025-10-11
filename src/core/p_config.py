@@ -37,6 +37,9 @@ class PConfig:
         },
         "logging": {
             "log_rotation_days": 30
+        },
+        "display": {
+            "max_versions_display": 20
         }
     }
 

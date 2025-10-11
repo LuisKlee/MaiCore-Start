@@ -27,6 +27,7 @@ from rich.table import Table
 from tqdm import tqdm
 
 from ..core.config import config_manager
+from ..core.p_config import p_config_manager
 from ..ui.interface import ui
 from ..utils.common import validate_path
 from .mongodb_installer import mongodb_installer
@@ -427,8 +428,7 @@ class DeploymentManager:
             
             # 按发布时间排序，分支版本置顶
             versions.sort(key=lambda x: (
-                x["type"] != "branch",  # 分支优先
-                x["published_at"] is None,  # 有发布时间的优先
+                x["type"] == "branch",  # 分支优先
                 x["published_at"] if x["published_at"] else ""
             ), reverse=True)
             
@@ -507,8 +507,7 @@ class DeploymentManager:
             
             # 按发布时间排序，分支版本置顶
             versions.sort(key=lambda x: (
-                x["type"] != "branch",  # 分支优先
-                x["published_at"] is None,  # 有发布时间的优先
+                x["type"] == "branch",  # 分支优先
                 x["published_at"] if x["published_at"] else ""
             ), reverse=True)
             
@@ -677,8 +676,14 @@ class DeploymentManager:
         table.add_column("说明", style="green", width=40)
         table.add_column("发布时间", style=ui.colors["blue"], width=12, justify="center")
 
-        # 显示前20个版本
-        display_versions = versions[:20]
+        # 获取要显示的版本数量
+        max_display = p_config_manager.get("display.max_versions_display", 20)
+        
+        # 如果max_display为None、0或负数，则显示所有版本
+        if max_display and max_display > 0:
+            display_versions = versions[:max_display]
+        else:
+            display_versions = versions
 
         for i, version in enumerate(display_versions, 1):
             if version["type"] == "branch":
