@@ -324,7 +324,7 @@ class MaiMaiLauncher:
         """处理杂项菜单"""
         while True:
             ui.show_misc_menu()
-            choice = ui.get_choice("请选择操作", ["A", "B", "Q"])
+            choice = ui.get_choice("请选择操作", ["A", "B", "C", "Q"])
             
             if choice == "Q":
                 break
@@ -332,6 +332,8 @@ class MaiMaiLauncher:
                 self.handle_about_menu()
             elif choice == "B":
                 self.handle_program_settings()
+            elif choice == "C":
+                self.handle_component_download()
 
     def handle_program_settings(self):
         """处理程序设置"""
@@ -424,6 +426,35 @@ class MaiMaiLauncher:
                     else:
                         ui.print_error("恢复默认设置失败。")
                     ui.pause()
+
+    def handle_component_download(self):
+        """处理组件下载"""
+        try:
+            # 导入组件下载管理器
+            from src.modules.component_download.component_manager import component_manager
+            
+            while True:
+                ui.clear_screen()
+                ui.components.show_title("组件下载中心", symbol="📥")
+                
+                # 显示组件选择菜单
+                component_key = component_manager.show_component_download_menu()
+                if not component_key:
+                    break
+                
+                # 执行组件下载
+                success = component_manager.download_component(component_key)
+                if success:
+                    ui.print_success(f"组件下载完成！")
+                else:
+                    ui.print_error(f"组件下载失败！")
+                
+                ui.pause()
+                
+        except Exception as e:
+            ui.print_error(f"组件下载过程出错：{str(e)}")
+            logger.error("组件下载异常", error=str(e))
+            ui.pause()
 
     def handle_process_status(self):
         """处理进程状态查看，支持自动刷新和交互式命令（最终优化版）。"""

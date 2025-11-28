@@ -51,5 +51,6 @@ SYMBOLS = {
     "validate": "🔍",
     "new": "✨",
     "plugin": "🧩",
-    "attention": "🚨"
+    "attention": "🚨",
+    "download": "📥"
 }

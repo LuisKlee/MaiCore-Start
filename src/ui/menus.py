@@ -131,6 +131,7 @@ class Menus:
         self.console.print("====>>功能<<====")
         self.console.print(f" [A] {self.symbols['about']} 关于本程序", style=self.colors["info"])
         self.console.print(f" [B] {self.symbols['edit']} 程序设置", style=self.colors["warning"])
+        self.console.print(f" [C] {self.symbols['download']} 组件下载", style=self.colors["success"])
         
         self.console.print("====>>返回<<====")
         self.console.print(f" [Q] {self.symbols['back']} 返回上级", style=self.colors["exit"])
