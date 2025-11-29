@@ -528,95 +528,145 @@ class DeploymentManager:
             return []
     
     def get_napcat_versions(self, force_refresh: bool = False) -> List[Dict]:
-        """获取NapCat版本列表 - 从GitHub API获取最新5个版本"""
+        """获取NapCat版本列表 - 从GitHub API获取最新5个版本及其实际资产"""
         # 检查缓存
         if not force_refresh and self._is_cache_valid() and self._napcat_versions_cache:
             return self._napcat_versions_cache
         
-        try:
-            # 从GitHub API获取NapCatQQ的最新releases
-            url = f"{self.github_api_base}/repos/{self.napcat_repo}/releases"
-            headers = {"Accept": "application/vnd.github.v3+json"}
-            
-            ui.print_info("正在获取 NapCatQQ 的最新版本信息...")
-            response = requests.get(url, headers=headers, timeout=30, verify=False)
-            response.raise_for_status()
-            
-            releases = response.json()
-            
-            # 获取最新的5个版本
-            latest_releases = releases[:5] if isinstance(releases, list) else []
-            
-            napcat_versions = []
-            for release in latest_releases:
-                version_name = release.get("tag_name", "unknown")
+        # 重试配置
+        max_retries = 3
+        retry_delay = 2  # 秒
+        
+        for attempt in range(max_retries):
+            try:
+                # 从GitHub API获取NapCatQQ的最新releases
+                url = f"{self.github_api_base}/repos/{self.napcat_repo}/releases"
+                headers = {"Accept": "application/vnd.github.v3+json"}
                 
-                # 为每个版本创建基础版和一键包版本
-                # 基础版下载链接
-                shell_url = f"https://github.com/NapNeko/NapCatQQ/releases/download/{version_name}/NapCat.Shell.zip"
+                if attempt == 0:
+                    ui.print_info("正在获取 NapCatQQ 的最新版本信息...")
+                else:
+                    ui.print_info(f"重试获取版本信息... (尝试 {attempt + 1}/{max_retries})")
                 
-                # 一键包版本（有头版本）
-                framework_onekey_url = f"https://github.com/NapNeko/NapCatQQ/releases/download/{version_name}/NapCat.Framework.Windows.OneKey.zip"
+                response = requests.get(url, headers=headers, timeout=30, verify=False)
+                response.raise_for_status()
                 
-                # 一键包版本（无头版本）
-                shell_onekey_url = f"https://github.com/NapNeko/NapCatQQ/releases/download/{version_name}/NapCat.Shell.Windows.OneKey.zip"
+                releases = response.json()
                 
-                # 添加基础版
-                napcat_versions.append({
-                    "name": f"{version_name}-shell",
-                    "display_name": f"{version_name} 基础版 (推荐)",
-                    "description": "最推荐的版本，适合大多数用户",
-                    "published_at": release.get("published_at", ""),
-                    "download_url": shell_url,
-                    "size": 0,  # 大小需要额外获取
-                    "changelog": release.get("body", "暂无更新日志"),
-                    "asset_name": "NapCat.Shell.zip",
-                    "version": version_name
-                })
+                # 获取最新的5个版本
+                latest_releases = releases[:5] if isinstance(releases, list) else []
                 
-                # 添加有头一键包版本
-                napcat_versions.append({
-                    "name": f"{version_name}-framework-onekey",
-                    "display_name": f"{version_name} 有头一键包",
-                    "description": "带QQ界面的一键包版本，适合挂机器人的同时附体发消息",
-                    "published_at": release.get("published_at", ""),
-                    "download_url": framework_onekey_url,
-                    "size": 0,  # 大小需要额外获取
-                    "changelog": release.get("body", "暂无更新日志"),
-                    "asset_name": "NapCat.Framework.Windows.OneKey.zip",
-                    "version": version_name
-                })
+                napcat_versions = []
+                for release in latest_releases:
+                    version_name = release.get("tag_name", "unknown")
+                    assets = release.get("assets", [])
+                    
+                    # 定义资产类型映射
+                    asset_types = {
+                        "NapCat.Shell.zip": {
+                            "suffix": "-shell",
+                            "display_suffix": "基础版 (推荐)",
+                            "description": "最推荐的版本，适合大多数用户"
+                        },
+                        "NapCat.Framework.zip": {
+                            "suffix": "-framework",
+                            "display_suffix": "框架版",
+                            "description": "框架版本，需要额外配置"
+                        },
+                        "NapCat.Framework.Windows.OneKey.zip": {
+                            "suffix": "-framework-onekey",
+                            "display_suffix": "有头一键包",
+                            "description": "带QQ界面的一键包版本，适合挂机器人的同时附体发消息"
+                        },
+                        "NapCat.Shell.Windows.OneKey.zip": {
+                            "suffix": "-shell-onekey",
+                            "display_suffix": "无头一键包",
+                            "description": "无界面的一键包版本"
+                        }
+                    }
+                    
+                    # 遍历实际存在的资产
+                    for asset in assets:
+                        asset_name = asset.get("name", "")
+                        
+                        # 检查是否是我们关注的资产类型
+                        if asset_name in asset_types:
+                            asset_info = asset_types[asset_name]
+                            download_url = asset.get("browser_download_url", "")
+                            size = asset.get("size", 0)
+                            
+                            if download_url:  # 只添加有有效下载链接的资产
+                                napcat_versions.append({
+                                    "name": f"{version_name}{asset_info['suffix']}",
+                                    "display_name": f"{version_name} {asset_info['display_suffix']}",
+                                    "description": asset_info["description"],
+                                    "published_at": release.get("published_at", ""),
+                                    "download_url": download_url,
+                                    "size": size,
+                                    "changelog": release.get("body", "暂无更新日志"),
+                                    "asset_name": asset_name,
+                                    "version": version_name
+                                })
                 
-                # 添加无头一键包版本
-                napcat_versions.append({
-                    "name": f"{version_name}-shell-onekey",
-                    "display_name": f"{version_name} 无头一键包",
-                    "description": "无界面的一键包版本",
-                    "published_at": release.get("published_at", ""),
-                    "download_url": shell_onekey_url,
-                    "size": 0,  # 大小需要额外获取
-                    "changelog": release.get("body", "暂无更新日志"),
-                    "asset_name": "NapCat.Shell.Windows.OneKey.zip",
-                    "version": version_name
-                })
-            
-            # 更新缓存
-            self._napcat_versions_cache = napcat_versions
-            import time
-            self._cache_timestamp = time.time()
-            
-            return napcat_versions
-            
-        except requests.RequestException as e:
-            ui.print_error(f"获取NapCat releases失败: {str(e)}")
-            logger.error("GitHub API请求失败", error=str(e), repo=self.napcat_repo)
-            # 返回默认版本作为备选
-            return self._get_default_napcat_versions()
-        except Exception as e:
-            ui.print_error(f"解析NapCat版本信息失败: {str(e)}")
-            logger.error("版本信息解析失败", error=str(e))
-            # 返回默认版本作为备选
-            return self._get_default_napcat_versions()
+                # 如果没有找到任何版本，返回默认版本
+                if not napcat_versions:
+                    ui.print_warning("未找到有效的NapCat资产，使用默认版本")
+                    return self._get_default_napcat_versions()
+                
+                # 更新缓存
+                self._napcat_versions_cache = napcat_versions
+                import time
+                self._cache_timestamp = time.time()
+                
+                return napcat_versions
+                
+            except requests.RequestException as e:
+                error_msg = str(e)
+                if attempt < max_retries - 1:
+                    # 还有重试机会
+                    if "rate limit" in error_msg.lower():
+                        ui.print_warning(f"GitHub API 速率限制，等待 {retry_delay} 秒后重试...")
+                    else:
+                        ui.print_warning(f"请求失败: {error_msg}，等待 {retry_delay} 秒后重试...")
+                    logger.warning("GitHub API请求失败，准备重试", 
+                                 error=error_msg, 
+                                 repo=self.napcat_repo,
+                                 attempt=attempt + 1,
+                                 max_retries=max_retries)
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5  # 指数退避
+                else:
+                    # 最后一次尝试失败
+                    ui.print_error(f"获取NapCat releases失败（已重试{max_retries}次）: {error_msg}")
+                    logger.error("GitHub API请求失败，重试耗尽", 
+                               error=error_msg, 
+                               repo=self.napcat_repo,
+                               total_attempts=max_retries)
+                    ui.print_info("将使用默认版本列表")
+                    # 返回默认版本作为备选
+                    return self._get_default_napcat_versions()
+                    
+            except Exception as e:
+                error_msg = str(e)
+                if attempt < max_retries - 1:
+                    ui.print_warning(f"解析失败: {error_msg}，等待 {retry_delay} 秒后重试...")
+                    logger.warning("版本信息解析失败，准备重试",
+                                 error=error_msg,
+                                 attempt=attempt + 1,
+                                 max_retries=max_retries)
+                    time.sleep(retry_delay)
+                    retry_delay *= 1.5
+                else:
+                    ui.print_error(f"解析NapCat版本信息失败（已重试{max_retries}次）: {error_msg}")
+                    logger.error("版本信息解析失败，重试耗尽", 
+                               error=error_msg,
+                               total_attempts=max_retries)
+                    ui.print_info("将使用默认版本列表")
+                    # 返回默认版本作为备选
+                    return self._get_default_napcat_versions()
+        
+        # 理论上不会到这里，但作为保险返回默认版本
+        return self._get_default_napcat_versions()
     
     def _get_default_napcat_versions(self) -> List[Dict]:
         """获取默认的NapCat版本列表"""
