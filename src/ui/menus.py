@@ -58,8 +58,8 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
 """
         )
         self.console.print(header_text, style=self.colors["header"])
-        # 每日一言和刷新选项在同一行显示，用 | 分割
-        self.console.print(f"{self.daily_quote} | [R] {self.symbols['refresh']} 刷新", style=self.colors["header"])
+        # 每日一言和刷新选项在同一行显示,用 | 分割,使用斜体
+        self.console.print(f"[italic]{self.daily_quote} | [R] {self.symbols['refresh']} 刷新[/italic]", style=self.colors["header"])
         self.console.print(f"\n{self.symbols['rocket']} 麦麦核心启动器控制台", style=self.colors["header"])
         self.console.print("——————————", style=self.colors["border"])
         self.console.print("选择选项", style=self.colors["border"])
