@@ -476,25 +476,24 @@ limitations under the License.
 
 *<p align="center">促进多元化艺术创作发展普及</p>*
 
-**Made with ❤️ by [xiaoCZX](https://github.com/xiaoCZX) and other contributors**
+**Made with ❤️ by [MaiCore-Start](https://github.com/MaiCore-Start) and other contributors**
 
 ```
-88b         d88           88 888888ba                                ,ad88ba,  88                          
-888         888           "" 88    "8b            88                d8"'  `"8b 88                    88   
-888b       d888              88    ,8P            88               d8'         88                    88   
-88 8b     d8'88 ,adPYYba, 88 88aaaa8P'  ,adPYba,  88MMM            88          88,dPPYba,  ,adPPYba, 88MMM  
-88 `8b   d8' 88 ""    `Y8 88 88“”“”8b, a8"    "8a 88     aaaaaaaa  88          88P'    "8a ""    `Y8 88   
-88  `8b d8'  88 ,adPPPP88 88 88    `8b 8b      d8 88     “”“”“”“”  Y8,         88       88 ,adPPPP88 88   
-88   `888'   88 88,   ,88 88 88    a8P "8a,  ,a8" 88,               Y8a.  .a8P 88       88 88,   ,88 88,  
-88           88 `"8bdP"Y8 88 888888P"   `"YbdP"'   "Y888             `"Y88Y"'  88       88 `"8bdP"Y8  "Y888
+ooo        ooooo  .oooooo.           .oooooo..o     .                          .   
+ &&.       .&&&` d&P`  `Y&b         d&P`    `Y&   .o&                        .o&  
+ &&&b     d'&&& &&&                 Y&&bo.      .o&&&oo  .oooo.   ooo  q&b .o&&&oo
+ & Y&&. .P  &&& &&&         &&&&&&&  `*Y&&&&o.    &&&   `P  )&&   `&&&``&P   &&&  
+ &  `&&&'   &&& &&&         *******      `“Y&&b   &&&    .oP&&&    &&&       &&&  
+ &    Y     &&& `&&b    ooo         oo     .d&P   &&& . d&(  &&&   &&&       &&& .
+o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&&`
 ```
 
 </div>
 
 ## 仓库状态
 
-![Alt](https://repobeats.axiom.co/api/embed/ff5f6f1d31a3efb31d5d7c64d3eec1899fd93cda.svg "Repobeats analytics image")
+![Alt](https://repobeats.axiom.co/api/embed/bcff8618d3f09eea1081f4fbcfb9fde5e464409a.svg "Repobeats analytics image")
 
 ## star统计
 
-![GitHub Star Chart](https://starchart.cc/xiaoCZX/MaiMbot-initiate.svg)
+![GitHub Star Chart](https://starchart.cc/MaiCore-Start/MaiCore-Start.svg)

@@ -91,6 +91,74 @@ class KnowledgeBuilder:
             logger.error("版本号解析失败", version=version, error=str(e))
             return False
     
+    def _is_version_080_or_higher(self, version: str) -> bool:
+        """
+        检查版本是否为0.8.0或更高
+        
+        Args:
+            version: 版本号字符串
+            
+        Returns:
+            是否为0.8.0或更高版本
+        """
+        try:
+            if version.lower() in ('main', 'dev', 'master'):
+                return True
+            
+            # 解析版本号
+            version_number = version.split('-')[0]  # 去掉后缀如 -alpha
+            version_parts = version_number.split('.')
+            
+            major = int(version_parts[0])
+            minor = int(version_parts[1])
+            patch = int(version_parts[2]) if len(version_parts) > 2 else 0
+            
+            # 检查是否 >= 0.8.0
+            if major > 0:
+                return True
+            elif major == 0 and minor > 8:
+                return True
+            elif major == 0 and minor == 8 and patch >= 0:
+                return True
+            else:
+                return False
+                
+        except (ValueError, IndexError):
+            logger.warning("版本号解析失败", version=version)
+            return False
+    
+    def _get_venv_python_path(self, config: Dict[str, Any]) -> Optional[str]:
+        """
+        获取虚拟环境的Python路径
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            虚拟环境Python路径，如果不存在则返回None
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return None
+        
+        # 检查配置中的venv_path
+        venv_path = config.get("venv_path", "")
+        if venv_path and os.path.exists(venv_path):
+            py_exe = os.path.join(venv_path, "Scripts" if os.name == 'nt' else "bin", 
+                                 "python.exe" if os.name == 'nt' else "python")
+            if os.path.exists(py_exe):
+                return py_exe
+        
+        # 检查bot_path下的常见虚拟环境目录
+        for venv_dir in ["venv", ".venv", "env"]:
+            venv_path = os.path.join(bot_path, venv_dir)
+            py_exe = os.path.join(venv_path, "Scripts" if os.name == 'nt' else "bin", 
+                                 "python.exe" if os.name == 'nt' else "python")
+            if os.path.exists(py_exe):
+                return py_exe
+        
+        return None
+    
     def run_lpmm_script(self, bot_path: str, script_name: str, description: str,
                        warning_messages: Optional[list] = None) -> bool:
         """
@@ -202,10 +270,111 @@ class KnowledgeBuilder:
         if not self._check_lpmm_version(config):
             return False
         
+        version = config.get("version_path", "")
+        
+        # 检查是否为0.8.0及以上版本
+        if self._is_version_080_or_higher(version):
+            ui.print_info(f"检测到版本 {version}（>= 0.8.0），使用新版知识库构建方法")
+            return self._entity_extract_v080(config)
+        else:
+            ui.print_info(f"检测到版本 {version}（< 0.8.0），使用旧版知识库构建方法")
+            return self._entity_extract_legacy(config)
+    
+    def _entity_extract_v080(self, config: Dict[str, Any]) -> bool:
+        """
+        执行实体提取（0.8.0及以上版本）
+        使用虚拟环境运行 python ./scripts/info_extraction.py
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
         warnings = [
-        "实体提取操作将会花费较多api余额和时间，建议在空闲时段执行。举例：600万字全剧情，提取选用deepseek v3 0324，消耗约40元，约3小时。",
-        "建议使用硅基流动的非Pro模型，或者使用可以用赠金抵扣的Pro模型",
-        "请确保账户余额充足，并且在执行前确认无误",
+            "实体提取操作将会花费较多api余额和时间，建议在空闲时段执行。",
+            "举例：600万字全剧情，提取选用deepseek v3 0324，消耗约40元，约3小时。",
+            "建议使用硅基流动的非Pro模型，或者使用可以用赠金抵扣的Pro模型",
+            "请确保账户余额充足，并且在执行前确认无误",
+        ]
+        
+        try:
+            # 显示警告信息
+            ui.print_warning("执行前请注意：")
+            for msg in warnings:
+                ui.console.print(f"  • {msg}", style=ui.colors["warning"])
+            
+            # 确认执行
+            if not ui.confirm("确定要执行实体提取吗？"):
+                ui.print_info("操作已取消")
+                return False
+
+            script_path = os.path.join(bot_path, "scripts", "info_extraction.py")
+            if not os.path.exists(script_path):
+                ui.print_error("脚本文件不存在：info_extraction.py")
+                logger.error("实体提取脚本不存在", path=script_path)
+                return False
+            
+            # 获取虚拟环境Python路径
+            python_exe = self._get_venv_python_path(config)
+            if not python_exe:
+                ui.print_warning("未找到虚拟环境，将使用系统Python")
+                python_cmd = "python"
+            else:
+                ui.print_success(f"使用虚拟环境：{python_exe}")
+                python_cmd = f'"{python_exe}"'
+            
+            ui.print_info("正在新窗口执行实体提取...")
+            ui.console.print("将在新的cmd窗口中执行脚本，请查看弹出的命令行窗口", style=ui.colors["info"])
+            logger.info("开始执行实体提取脚本（v0.8.0+）", script="info_extraction.py", python=python_cmd)
+            
+            # 构建在新cmd窗口中执行的命令
+            cmd_command = f'start cmd /k "cd /d "{bot_path}" && {python_cmd} .\\scripts\\info_extraction.py && pause"'
+            
+            # 执行命令
+            process = subprocess.run(
+                cmd_command,
+                shell=True,
+                capture_output=False,
+                text=True
+            )
+            
+            ui.print_info("实体提取已在新窗口中启动")
+            ui.console.print("请查看新打开的命令行窗口以确认执行结果", style=ui.colors["warning"])
+            ui.console.print("执行完成后，新窗口将显示 '请按任意键继续...' 提示", style=ui.colors["info"])
+            
+            logger.info("实体提取脚本已在新窗口启动")
+            return True
+                
+        except Exception as e:
+            ui.print_error(f"执行脚本时发生错误：{str(e)}")
+            logger.error("执行实体提取脚本异常", error=str(e))
+            return False
+    
+    def _entity_extract_legacy(self, config: Dict[str, Any]) -> bool:
+        """
+        执行实体提取（0.8.0以下版本）
+        直接运行脚本不激活虚拟环境
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        warnings = [
+            "实体提取操作将会花费较多api余额和时间，建议在空闲时段执行。",
+            "举例：600万字全剧情，提取选用deepseek v3 0324，消耗约40元，约3小时。",
+            "建议使用硅基流动的非Pro模型，或者使用可以用赠金抵扣的Pro模型",
+            "请确保账户余额充足，并且在执行前确认无误",
         ]
         
         return self.run_lpmm_script(
@@ -233,14 +402,117 @@ class KnowledgeBuilder:
         if not self._check_lpmm_version(config):
             return False
         
+        version = config.get("version_path", "")
+        
+        # 检查是否为0.8.0及以上版本
+        if self._is_version_080_or_higher(version):
+            ui.print_info(f"检测到版本 {version}（>= 0.8.0），使用新版知识库构建方法")
+            return self._knowledge_import_v080(config)
+        else:
+            ui.print_info(f"检测到版本 {version}（< 0.8.0），使用旧版知识库构建方法")
+            return self._knowledge_import_legacy(config)
+    
+    def _knowledge_import_v080(self, config: Dict[str, Any]) -> bool:
+        """
+        执行知识图谱导入（0.8.0及以上版本）
+        使用虚拟环境运行 python ./scripts/import_openie.py
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
         warnings = [
-        "OpenIE导入时会大量发送请求，可能会撞到请求速度上限，请注意选用的模型",
-        "同之前样例：在本地模型下，在70分钟内我们发送了约8万条请求，在网络允许下，速度会更快",
-        "推荐使用硅基流动的Pro/BAAI/bge-m3",
-        "每百万Token费用为0.7元",
-        "知识导入时，会消耗大量系统资源，建议在较好配置电脑上运行",
-        "同上样例，导入时10700K几乎跑满，14900HX占用80%，峰值内存占用约3GB",
-        "请确保账户余额充足，并且在执行前确认无误"
+            "OpenIE导入时会大量发送请求，可能会撞到请求速度上限，请注意选用的模型",
+            "同之前样例：在本地模型下，在70分钟内我们发送了约8万条请求，在网络允许下，速度会更快",
+            "推荐使用硅基流动的DeepSeek-V3.2-Exp",
+            "每百万Token费用为3元",
+            "知识导入时，会消耗大量系统资源，建议在较好配置电脑上运行",
+            "同上样例，导入时10700K几乎跑满，14900HX占用80%，峰值内存占用约3GB",
+            "请确保账户余额充足，并且在执行前确认无误"
+        ]
+        
+        try:
+            # 显示警告信息
+            ui.print_warning("执行前请注意：")
+            for msg in warnings:
+                ui.console.print(f"  • {msg}", style=ui.colors["warning"])
+            
+            # 确认执行
+            if not ui.confirm("确定要执行知识图谱导入吗？"):
+                ui.print_info("操作已取消")
+                return False
+
+            script_path = os.path.join(bot_path, "scripts", "import_openie.py")
+            if not os.path.exists(script_path):
+                ui.print_error("脚本文件不存在：import_openie.py")
+                logger.error("知识图谱导入脚本不存在", path=script_path)
+                return False
+            
+            # 获取虚拟环境Python路径
+            python_exe = self._get_venv_python_path(config)
+            if not python_exe:
+                ui.print_warning("未找到虚拟环境，将使用系统Python")
+                python_cmd = "python"
+            else:
+                ui.print_success(f"使用虚拟环境：{python_exe}")
+                python_cmd = f'"{python_exe}"'
+            
+            ui.print_info("正在新窗口执行知识图谱导入...")
+            ui.console.print("将在新的cmd窗口中执行脚本，请查看弹出的命令行窗口", style=ui.colors["info"])
+            logger.info("开始执行知识图谱导入脚本（v0.8.0+）", script="import_openie.py", python=python_cmd)
+            
+            # 构建在新cmd窗口中执行的命令
+            cmd_command = f'start cmd /k "cd /d "{bot_path}" && {python_cmd} .\\scripts\\import_openie.py && pause"'
+            
+            # 执行命令
+            process = subprocess.run(
+                cmd_command,
+                shell=True,
+                capture_output=False,
+                text=True
+            )
+            
+            ui.print_info("知识图谱导入已在新窗口中启动")
+            ui.console.print("请查看新打开的命令行窗口以确认执行结果", style=ui.colors["warning"])
+            ui.console.print("执行完成后，新窗口将显示 '请按任意键继续...' 提示", style=ui.colors["info"])
+            
+            logger.info("知识图谱导入脚本已在新窗口启动")
+            return True
+                
+        except Exception as e:
+            ui.print_error(f"执行脚本时发生错误：{str(e)}")
+            logger.error("执行知识图谱导入脚本异常", error=str(e))
+            return False
+    
+    def _knowledge_import_legacy(self, config: Dict[str, Any]) -> bool:
+        """
+        执行知识图谱导入（0.8.0以下版本）
+        直接运行脚本不激活虚拟环境
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        warnings = [
+            "OpenIE导入时会大量发送请求，可能会撞到请求速度上限，请注意选用的模型",
+            "同之前样例：在本地模型下，在70分钟内我们发送了约8万条请求，在网络允许下，速度会更快",
+            "推荐使用硅基流动的DeepSeek-V3.2-Exp",
+            "每百万Token费用为3元",
+            "知识导入时，会消耗大量系统资源，建议在较好配置电脑上运行",
+            "同上样例，导入时10700K几乎跑满，14900HX占用80%，峰值内存占用约3GB",
+            "请确保账户余额充足，并且在执行前确认无误"
         ]
         
         return self.run_lpmm_script(
@@ -253,6 +525,115 @@ class KnowledgeBuilder:
     def pipeline(self, config: Dict[str, Any]) -> bool:
         """
         执行完整的LPMM一条龙服务
+        对于0.8.0+版本：文本分割与实体提取合并 → 知识图谱导入
+        对于旧版本：文本分割 → 实体提取 → 知识图谱导入
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        # 检查版本要求
+        if not self._check_lpmm_version(config):
+            return False
+        
+        version = config.get("version_path", "")
+        
+        # 检查是否为0.8.0及以上版本
+        if self._is_version_080_or_higher(version):
+            ui.print_info(f"检测到版本 {version}（>= 0.8.0），使用新版一条龙流程")
+            return self._pipeline_v080(config)
+        else:
+            ui.print_info(f"检测到版本 {version}（< 0.8.0），使用旧版一条龙流程")
+            return self._pipeline_legacy(config)
+    
+    def _pipeline_v080(self, config: Dict[str, Any]) -> bool:
+        """
+        执行完整的LPMM一条龙服务（0.8.0及以上版本）
+        包括：文本分割与实体提取（info_extraction.py） → 知识图谱导入（import_openie.py）
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        # 显示完整的警告信息
+        warnings = [
+            "此操作将执行完整的知识库构建流程（0.8.0+版本）",
+            "包括：文本分割与实体提取（合并） → 知识图谱导入",
+            "确保所有依赖已正确安装",
+            "此操作可能需要很长时间和大量资源",
+            "请确保账户余额充足（实体提取和知识导入会消耗API费用）",
+            "建议在空闲时段执行",
+            "执行前请确保麦麦路径下的相关脚本文件存在"
+        ]
+        
+        ui.print_warning("执行前请注意：")
+        for msg in warnings:
+            ui.console.print(f"  • {msg}", style=ui.colors["warning"])
+        
+        if not ui.confirm("确定要执行完整的LPMM一条龙服务吗？"):
+            ui.print_info("操作已取消")
+            return False
+        
+        ui.console.print("\n[🚀 开始执行LPMM一条龙服务（v0.8.0+）]", style=ui.colors["primary"])
+        ui.console.print("="*50)
+        
+        total_steps = 2
+        current_step = 0
+        
+        try:
+            # 步骤1：文本分割与实体提取（合并）
+            current_step += 1
+            ui.console.print(f"\n📝 步骤{current_step}/{total_steps}: 文本分割与实体提取", style=ui.colors["info"])
+            ui.console.print("-" * 30)
+            ui.console.print("⚠️  注意：此步骤包含文本分割和实体提取，可能需要较长时间和API费用", style=ui.colors["warning"])
+            
+            if not self._entity_extract_v080_pipeline(config):
+                ui.print_error("文本分割与实体提取失败，终止一条龙服务")
+                return False
+            
+            ui.print_success("✅ 文本分割与实体提取完成")
+            
+            # 步骤2：知识图谱导入
+            current_step += 1
+            ui.console.print(f"\n📊 步骤{current_step}/{total_steps}: 知识图谱导入", style=ui.colors["info"])
+            ui.console.print("-" * 30)
+            ui.console.print("⚠️  注意：知识图谱导入将消耗大量系统资源", style=ui.colors["warning"])
+            
+            if not self._knowledge_import_v080_pipeline(config):
+                ui.print_error("知识图谱导入失败，终止一条龙服务")
+                return False
+            
+            ui.print_success("✅ 知识图谱导入完成")
+            
+        except Exception as e:
+            ui.print_error(f"一条龙服务执行过程中发生错误：{str(e)}")
+            logger.error("LPMM一条龙服务异常（v0.8.0+）", error=str(e), step=current_step)
+            return False
+        
+        # 完成
+        ui.console.print("\n[🎉 LPMM一条龙服务完成]", style=ui.colors["success"])
+        ui.console.print("="*50)
+        ui.print_success("所有步骤已成功完成！")
+        ui.console.print("您的LPMM知识库现已准备就绪", style=ui.colors["info"])
+        
+        logger.info("LPMM一条龙服务完成（v0.8.0+）", bot_path=bot_path)
+        return True
+    
+    def _pipeline_legacy(self, config: Dict[str, Any]) -> bool:
+        """
+        执行完整的LPMM一条龙服务（0.8.0以下版本）
         包括：文本分割 → 实体提取 → 知识图谱导入
         
         Args:
@@ -263,11 +644,6 @@ class KnowledgeBuilder:
         """
         bot_path = self._get_bot_path(config)
         if not bot_path:
-            # _get_bot_path 会打印错误信息
-            return False
-        
-        # 检查版本要求
-        if not self._check_lpmm_version(config):
             return False
         
         # 显示完整的警告信息
@@ -343,6 +719,106 @@ class KnowledgeBuilder:
         ui.console.print("您的LPMM知识库现已准备就绪", style=ui.colors["info"])
         
         logger.info("LPMM一条龙服务完成", bot_path=bot_path)
+        return True
+    
+    def _entity_extract_v080_pipeline(self, config: Dict[str, Any]) -> bool:
+        """
+        执行文本分割与实体提取（内部方法，用于0.8.0+一条龙服务）
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        script_path = os.path.join(bot_path, "scripts", "info_extraction.py")
+        if not os.path.exists(script_path):
+            ui.print_error("脚本文件不存在：info_extraction.py")
+            logger.error("实体提取脚本不存在", path=script_path)
+            return False
+        
+        # 获取虚拟环境Python路径
+        python_exe = self._get_venv_python_path(config)
+        if not python_exe:
+            ui.print_warning("未找到虚拟环境，将使用系统Python")
+            python_cmd = "python"
+        else:
+            ui.print_success(f"使用虚拟环境：{python_exe}")
+            python_cmd = f'"{python_exe}"'
+        
+        ui.print_info("正在新窗口执行文本分割与实体提取...")
+        ui.console.print("将在新的cmd窗口中执行脚本，请查看弹出的命令行窗口", style=ui.colors["info"])
+        logger.info("开始执行文本分割与实体提取脚本（v0.8.0+ pipeline）", script="info_extraction.py", python=python_cmd)
+        
+        # 构建在新cmd窗口中执行的命令
+        cmd_command = f'start cmd /k "cd /d "{bot_path}" && {python_cmd} .\\scripts\\info_extraction.py && echo. && echo 脚本执行完成！ && pause"'
+        
+        # 执行命令
+        subprocess.run(cmd_command, shell=True, capture_output=False, text=True)
+        
+        ui.print_info("文本分割与实体提取已在新窗口中启动")
+        ui.console.print("请查看新打开的命令行窗口以确认执行结果", style=ui.colors["warning"])
+        ui.console.print("执行完成后，新窗口将显示 '请按任意键继续...' 提示", style=ui.colors["info"])
+        
+        # 在一条龙服务中，等待用户确认后再继续
+        ui.console.print("请等待脚本执行完成后再继续...", style=ui.colors["warning"])
+        ui.get_input("脚本执行完成后，请按回车键继续下一步...")
+        
+        logger.info("文本分割与实体提取脚本已在新窗口启动")
+        return True
+    
+    def _knowledge_import_v080_pipeline(self, config: Dict[str, Any]) -> bool:
+        """
+        执行知识图谱导入（内部方法，用于0.8.0+一条龙服务）
+        
+        Args:
+            config: 配置字典
+            
+        Returns:
+            执行是否成功
+        """
+        bot_path = self._get_bot_path(config)
+        if not bot_path:
+            return False
+        
+        script_path = os.path.join(bot_path, "scripts", "import_openie.py")
+        if not os.path.exists(script_path):
+            ui.print_error("脚本文件不存在：import_openie.py")
+            logger.error("知识图谱导入脚本不存在", path=script_path)
+            return False
+        
+        # 获取虚拟环境Python路径
+        python_exe = self._get_venv_python_path(config)
+        if not python_exe:
+            ui.print_warning("未找到虚拟环境，将使用系统Python")
+            python_cmd = "python"
+        else:
+            ui.print_success(f"使用虚拟环境：{python_exe}")
+            python_cmd = f'"{python_exe}"'
+        
+        ui.print_info("正在新窗口执行知识图谱导入...")
+        ui.console.print("将在新的cmd窗口中执行脚本，请查看弹出的命令行窗口", style=ui.colors["info"])
+        logger.info("开始执行知识图谱导入脚本（v0.8.0+ pipeline）", script="import_openie.py", python=python_cmd)
+        
+        # 构建在新cmd窗口中执行的命令
+        cmd_command = f'start cmd /k "cd /d "{bot_path}" && {python_cmd} .\\scripts\\import_openie.py && echo. && echo 脚本执行完成！ && pause"'
+        
+        # 执行命令
+        subprocess.run(cmd_command, shell=True, capture_output=False, text=True)
+        
+        ui.print_info("知识图谱导入已在新窗口中启动")
+        ui.console.print("请查看新打开的命令行窗口以确认执行结果", style=ui.colors["warning"])
+        ui.console.print("执行完成后，新窗口将显示 '请按任意键继续...' 提示", style=ui.colors["info"])
+        
+        # 在一条龙服务中，等待用户确认后再继续
+        ui.console.print("请等待脚本执行完成后再继续...", style=ui.colors["warning"])
+        ui.get_input("脚本执行完成后，请按回车键继续...")
+        
+        logger.info("知识图谱导入脚本已在新窗口启动")
         return True
     
     def legacy_knowledge_build(self, config: Dict[str, Any]) -> bool:
