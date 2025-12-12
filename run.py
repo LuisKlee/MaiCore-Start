@@ -29,8 +29,10 @@ import winreg
 REQUIREMENTS = 'requirements.txt'
 MAIN_SCRIPT = 'main_refactored.py'
 VENV_DIRS = ['venv', '.venv', 'env', '.env']
-PYTHON_INSTALLER = Path('install/python-3.12.8-amd64.exe')
+PYTHON_INSTALLER = Path('./install/python-3.12.8-amd64.exe')
 PYTHON_DOWNLOAD_URL = 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe'
+PRIMARY_PIP_INDEX = os.environ.get('PIP_PRIMARY_INDEX', 'https://pypi.tuna.tsinghua.edu.cn/simple')
+FALLBACK_PIP_INDEX = os.environ.get('PIP_FALLBACK_INDEX', 'https://pypi.org/simple')
 
 def find_existing_venv():
     cwd = Path.cwd()
@@ -135,7 +137,10 @@ def main():
         print(f"[ERROR] 未找到 {REQUIREMENTS} 文件！")
         sys.exit(1)
     print("[INFO] 正在检查并安装依赖...")
-    run_in_venv(python_exe, ['-m', 'pip', 'install', '-r', REQUIREMENTS, '-i', 'https://pypi.tuna.tsinghua.edu.cn/simple'])
+    pip_cmd = ['-m', 'pip', 'install', '-r', REQUIREMENTS, '-i', PRIMARY_PIP_INDEX]
+    if FALLBACK_PIP_INDEX:
+        pip_cmd += ['--extra-index-url', FALLBACK_PIP_INDEX]
+    run_in_venv(python_exe, pip_cmd)
     # 启动主程序
     if not Path(MAIN_SCRIPT).exists():
         print(f"[ERROR] 未找到 {MAIN_SCRIPT} 文件！")

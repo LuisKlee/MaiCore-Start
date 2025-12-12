@@ -3,10 +3,15 @@
 负责启动和管理麦麦实例及其相关组件。
 """
 import os
+import shutil
 import subprocess
 import time
+import webbrowser
 import structlog
+from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
+import psutil
+from rich.table import Table
 
 from ..ui.interface import ui
 from ..utils.common import check_process, validate_path
@@ -27,10 +32,20 @@ class _ProcessManager:
     def start_in_new_cmd(self, command: str, cwd: str, title: str) -> Optional[subprocess.Popen]:
         """在新的CMD窗口中启动命令。"""
         try:
-            cmd_command = f'start "{title}" cmd /k "chcp 65001 && cd /d "{cwd}" && {command}"'
-            logger.info("在新CMD窗口启动进程", title=title, command=command, cwd=cwd)
-            
-            process = subprocess.Popen(cmd_command, shell=True, cwd=cwd)
+            # 构造在新控制台中执行的命令
+            full_command = f'cmd /k "chcp 65001 && title {title} && cd /d "{cwd}" && {command}"'
+            logger.info("在新控制台启动进程", title=title, command=full_command, cwd=cwd)
+
+            creationflags = 0
+            if os.name == 'nt':
+                creationflags = subprocess.CREATE_NEW_CONSOLE
+
+            process = subprocess.Popen(
+                full_command,
+                cwd=cwd,
+                shell=False, # shell=False更安全，且CREATE_NEW_CONSOLE需要它
+                creationflags=creationflags
+            )
             
             process_info = {
                 "process": process,
@@ -49,31 +64,121 @@ class _ProcessManager:
 
     def stop_all(self):
         """停止所有由该管理器启动的进程。"""
+        # 创建一个pid列表的副本进行迭代，因为stop_process会修改running_processes列表
+        pids_to_stop = [info["process"].pid for info in self.running_processes if info.get("process")]
+        
+        if not pids_to_stop:
+            return
+
         stopped_count = 0
-        for info in self.running_processes:
-            process = info["process"]
-            if process.poll() is None:  # 如果进程仍在运行
-                try:
-                    process.terminate()
-                    stopped_count += 1
-                    logger.info("终止进程", pid=process.pid, title=info['title'])
-                except Exception as e:
-                    logger.warning("终止进程失败", pid=process.pid, title=info['title'], error=str(e))
+        for pid in pids_to_stop:
+            if self.stop_process(pid):
+                stopped_count += 1
         
         if stopped_count > 0:
             ui.print_info(f"已成功停止 {stopped_count} 个相关进程。")
-        
-        self.running_processes.clear()
 
     def get_running_processes_info(self) -> List[Dict]:
-        """获取当前仍在运行的进程信息。"""
+        """获取当前仍在运行的进程信息，包括资源占用。"""
         active_processes = []
         # 过滤掉已经结束的进程
         self.running_processes = [p for p in self.running_processes if p["process"].poll() is None]
         for info in self.running_processes:
-            info["running_time"] = time.time() - info["start_time"]
-            active_processes.append(info)
+            try:
+                p = psutil.Process(info["process"].pid)
+                info["pid"] = p.pid
+                # CPU percent is now calculated in show_running_processes to avoid conflicts
+                info["memory_mb"] = p.memory_info().rss / (1024 * 1024)
+                info["running_time"] = time.time() - info["start_time"]
+                active_processes.append(info)
+            except psutil.NoSuchProcess:
+                # 获取pid用于日志记录，如果process对象不存在则返回None
+                pid = getattr(info.get("process"), 'pid', None)
+                logger.warning("进程已消失，无法获取信息", pid=pid)
+            except Exception as e:
+                logger.error("获取进程信息失败", error=str(e))
         return active_processes
+
+    def stop_process(self, pid: int) -> bool:
+        """通过PID停止单个进程及其子进程。"""
+        process_info = next((info for info in self.running_processes if info.get("process") and info["process"].pid == pid), None)
+        
+        if not process_info:
+            logger.warning("尝试停止一个非托管进程", pid=pid)
+            return False
+
+        title = process_info["title"]
+        try:
+            # 优先使用 taskkill (仅限Windows) 来确保终止整个进程树
+            if os.name == 'nt':
+                # /F: 强制终止
+                # /T: 终止进程树
+                # /PID: 指定进程ID
+                kill_command = ["taskkill", "/F", "/T", "/PID", str(pid)]
+                result = subprocess.run(
+                    kill_command,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW # 防止弹出窗口
+                )
+                if result.returncode == 0 or "已终止" in result.stdout or "terminated" in result.stdout.lower():
+                    logger.info("已通过 taskkill 成功终止进程树", pid=pid, title=title)
+                elif "not found" in result.stderr.lower(): # 进程已经不存在
+                     logger.warning("尝试停止的进程已不存在 (taskkill)", pid=pid)
+                else:
+                    # 如果taskkill失败，回退到psutil方法
+                    logger.warning("taskkill 失败，回退到 psutil", pid=pid, stderr=result.stderr)
+                    parent = psutil.Process(pid)
+                    for child in parent.children(recursive=True):
+                        child.terminate()
+                    parent.terminate()
+            else:
+                # 对于非Windows系统，使用psutil
+                parent = psutil.Process(pid)
+                for child in parent.children(recursive=True):
+                    child.terminate()
+                parent.terminate()
+            
+            ui.print_success(f"进程 '{title}' (PID: {pid}) 已成功请求停止。")
+
+        except psutil.NoSuchProcess:
+            logger.warning("尝试停止的进程已不存在 (psutil)", pid=pid)
+            # 进程已不存在，也视为成功
+        except Exception as e:
+            logger.error("终止进程时发生未知错误", pid=pid, title=title, error=str(e))
+            ui.print_error(f"停止进程 '{title}' (PID: {pid}) 失败: {e}")
+            return False
+        finally:
+            # 无论成功与否，都从管理列表中移除
+            if process_info in self.running_processes:
+                self.running_processes.remove(process_info)
+        
+        return True
+
+    def restart_process(self, pid: int) -> bool:
+        """通过PID重启单个进程。"""
+        process_info = next((info for info in self.running_processes if info.get("process") and info["process"].pid == pid), None)
+            
+        if process_info:
+            command = process_info["command"]
+            cwd = process_info["cwd"]
+            title = process_info["title"]
+            
+            ui.print_info(f"正在重启进程 '{title}' (PID: {pid})...")
+            
+            if self.stop_process(pid):
+                time.sleep(1) # 等待端口释放等
+                new_process = self.start_in_new_cmd(command, cwd, title)
+                if new_process:
+                    ui.print_success(f"进程 '{title}' 重启成功。")
+                    return True
+            
+            ui.print_error(f"进程 '{title}' (PID: {pid}) 重启失败。")
+            return False
+        else:
+            ui.print_warning(f"未找到PID为 {pid} 的进程，无法重启。")
+            return False
 
 
 class _LaunchComponent:
@@ -120,38 +225,57 @@ class _MongoDbComponent(_LaunchComponent):
         self.is_enabled = self.config.get("install_options", {}).get("install_mongodb", False)
 
     def get_launch_details(self) -> Optional[Tuple[str, str, str]]:
-        mongodb_path = self.config.get("mongodb_path", "")
-        if not (mongodb_path and os.path.exists(mongodb_path)):
-            logger.warning("MongoDB路径无效", path=mongodb_path)
-            return None
-        
-        mongod_exe = next((os.path.join(root, f) for root, _, files in os.walk(mongodb_path) for f in files if f == "mongod.exe"), None)
-        
-        if not mongod_exe:
-            logger.error("在MongoDB路径中未找到mongod.exe", path=mongodb_path)
-            return None
-            
-        data_dir = os.path.join(mongodb_path, "data")
-        os.makedirs(data_dir, exist_ok=True)
-        
-        command = f'"{mongod_exe}" --dbpath "{data_dir}"'
-        title = f"MongoDB - {self.config.get('version_path', 'N/A')}"
-        return command, mongodb_path, title
+        # 不再需要启动详情，因为我们将检测系统服务
+        return None
 
     def start(self, process_manager: _ProcessManager) -> bool:
         if not self.is_enabled:
-            return True # 如果没配置，也算作“成功”
+            return True # 如果没配置，也算作"成功"
         
-        if check_process("mongod.exe"):
-            ui.print_info("MongoDB 已经在运行。")
-            logger.info("MongoDB已经在运行")
-            return True
-        
-        ui.print_info("尝试启动 MongoDB...")
-        return super().start(process_manager)
+        # 检查系统服务中的MongoDB服务是否启动
+        try:
+            # 使用sc query命令检查MongoDB服务状态
+            result = subprocess.run(["sc", "query", "MongoDB"], capture_output=True, text=True, timeout=10)
+            
+            if "RUNNING" in result.stdout:
+                ui.print_info("MongoDB服务已经在运行。")
+                logger.info("MongoDB服务已经在运行")
+                return True
+            elif "STOPPED" in result.stdout:
+                ui.print_warning("MongoDB服务未启动。")
+                ui.print_info("请前往系统服务管理页面手动启动MongoDB服务。")
+                
+                # 尝试打开系统服务管理程序
+                services_lnk = r"C:\ProgramData\Microsoft\Windows\Start Menu\Programs\Administrative Tools\services.lnk"
+                if os.path.exists(services_lnk):
+                    try:
+                        os.startfile(services_lnk)
+                        ui.print_success("已打开系统服务管理程序，请找到MongoDB服务并手动启动。")
+                    except Exception as e:
+                        ui.print_warning(f"无法自动打开系统服务管理程序: {e}")
+                        ui.print_info("请手动打开'运行'对话框(win+R)，输入'services.msc'来打开系统服务管理程序。")
+                else:
+                    ui.print_info("请手动打开'运行'对话框(win+R)，输入'services.msc'来打开系统服务管理程序。")
+                    ui.print_info("在服务列表中找到“MongoDB Server(MongoDB)”服务，右键点击并选择'启动'。")
+                
+                return False
+            else:
+                ui.print_warning("未找到MongoDB服务。")
+                ui.print_info("请确认MongoDB是否已正确安装为系统服务。")
+                return False
+                
+        except subprocess.TimeoutExpired:
+            ui.print_error("检查MongoDB服务状态超时。")
+            logger.error("检查MongoDB服务状态超时")
+            return False
+        except Exception as e:
+            ui.print_error(f"检查MongoDB服务状态时发生错误: {e}")
+            logger.error("检查MongoDB服务状态时发生错误", error=str(e))
+            return False
 
 
 class _NapCatComponent(_LaunchComponent):
+    """NapCat组件，通过自动检测支持OneKey和Shell版本。"""
     def __init__(self, config: Dict[str, Any]):
         super().__init__("NapCat", config)
         self.check_enabled()
@@ -159,67 +283,76 @@ class _NapCatComponent(_LaunchComponent):
     def check_enabled(self):
         self.is_enabled = self.config.get("install_options", {}).get("install_napcat", False)
 
+    def _is_shell_version(self) -> bool:
+        """通过检测特征启动脚本文件来判断是否为NapCat.Shell版本。"""
+        napcat_path = self.config.get("napcat_path", "")
+        if not napcat_path:
+            return False
+        
+        napcat_dir = os.path.dirname(napcat_path)
+        if not os.path.isdir(napcat_dir):
+            return False
+            
+        shell_scripts = [
+            "launcher.bat", "launcher-user.bat",
+            "launcher-win10.bat", "launcher-win10-user.bat"
+        ]
+        
+        return any(os.path.exists(os.path.join(napcat_dir, script)) for script in shell_scripts)
+
     def get_launch_details(self) -> Optional[Tuple[str, str, str]]:
+        """
+        获取OneKey版本的启动详情。
+        Shell版本有独立的启动逻辑，不使用此方法。
+        """
         napcat_path = self.config.get("napcat_path", "")
         if not (napcat_path and os.path.exists(napcat_path) and napcat_path.lower().endswith('.exe')):
             logger.error("NapCat路径无效", path=napcat_path)
             return None
         
-        # 获取NapCat版本
-        napcat_version = self.config.get("napcat_version", "")
-        
-        # 检查是否有QQ号配置
-        qq_account = self.config.get("qq_account")
-        
-        # 根据NapCat版本确定启动命令
-        if napcat_version == "NapCat.Shell":
-            # NapCat.Shell版本的启动方式
-            # 获取NapCat根目录
-            napcat_dir = os.path.dirname(napcat_path)
-            
-            # 检测操作系统版本
-            import platform
-            is_win10 = platform.release() == "10"
-            
-            # 确定启动脚本名称
-            if is_win10:
-                preferred_script = "launcher-win10-user.bat"
-                fallback_script = "launcher-win10.bat"
-            else:
-                preferred_script = "launcher-user.bat"
-                fallback_script = "launcher.bat"
-            
-            # 检查首选脚本是否存在
-            preferred_script_path = os.path.join(napcat_dir, preferred_script)
-            if os.path.exists(preferred_script_path):
-                command = f'"{preferred_script_path}"'
-                if qq_account:
-                    command += f" {qq_account}"
-                cwd = napcat_dir
-                title = f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)"
-                return command, cwd, title
-            
-            # 检查备选脚本是否存在
-            fallback_script_path = os.path.join(napcat_dir, fallback_script)
-            if os.path.exists(fallback_script_path):
-                command = f'"{fallback_script_path}"'
-                if qq_account:
-                    command += f" {qq_account}"
-                cwd = napcat_dir
-                title = f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)"
-                return command, cwd, title
-            
-            # 如果都没有找到，返回None
-            logger.error("未找到NapCat.Shell启动脚本", preferred=preferred_script_path, fallback=fallback_script_path)
+        # 如果是Shell版本，则此方法不适用
+        if self._is_shell_version():
             return None
+            
+        # OneKey版本的启动命令
+        command = f'"{napcat_path}"'
+        if qq_account := self.config.get("qq_account"):
+            command += f" {qq_account}"
+        cwd = os.path.dirname(napcat_path)
+        title = f"NapCatQQ - {self.config.get('version_path', 'N/A')}"
+        return command, cwd, title
+
+    def _try_launch_shell_script(
+        self, script_path: str, napcat_dir: str, process_manager: _ProcessManager, qq_account: Optional[str] = None
+    ) -> Optional[bool]:
+        """
+        尝试启动单个NapCat.Shell脚本，并与用户确认结果。
+        """
+        if not os.path.exists(script_path):
+            logger.warning("NapCat.Shell 启动脚本不存在", path=script_path)
+            return None
+
+        script_name = os.path.basename(script_path)
+        command = f'"{script_name}"'
+        if qq_account:
+            command += f" {qq_account}"
+        
+        title = f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)"
+        
+        process = process_manager.start_in_new_cmd(command, napcat_dir, title)
+        if not process:
+            return False
+
+        time.sleep(3)
+
+        ui.print_warning("NapCat可能启动失败，这应该不是您或我们的问题，我们可以换一种方式启动...")
+        if ui.confirm("您的NapCat启动成功了吗？"):
+            return True
         else:
-            # 默认启动方式（OneKey版本）
-            command = f'"{napcat_path}"'
-            if qq_account:
-                command += f" {qq_account}"
-            cwd = os.path.dirname(napcat_path)
-            title = f"NapCatQQ - {self.config.get('version_path', 'N/A')}"
-            return command, cwd, title
+            ui.print_info(f"正在停止可能失败的 NapCat 进程 (PID: {process.pid})...")
+            process_manager.stop_process(process.pid)
+            time.sleep(1)
+            return False
 
     def start(self, process_manager: _ProcessManager) -> bool:
         if not self.is_enabled:
@@ -230,75 +363,55 @@ class _NapCatComponent(_LaunchComponent):
             logger.info("NapCat已经在运行")
             return True
             
-        # 获取NapCat版本
-        napcat_version = self.config.get("napcat_version", "")
-        
-        # 如果是NapCat.Shell版本，需要特殊处理
-        if napcat_version == "NapCat.Shell":
-            napcat_path = self.config.get("napcat_path", "")
-            napcat_dir = os.path.dirname(napcat_path)
-            
-            # 检测操作系统版本
-            import platform
-            is_win10 = platform.release() == "10"
-            
-            # 确定启动脚本名称
-            if is_win10:
-                preferred_script = "launcher-win10-user.bat"
-                fallback_script = "launcher-win10.bat"
-            else:
-                preferred_script = "launcher-user.bat"
-                fallback_script = "launcher.bat"
-            
-            # 尝试启动首选脚本
-            ui.print_info("尝试启动 NapCat (Shell)...")
-            preferred_script_path = os.path.join(napcat_dir, preferred_script)
-            if os.path.exists(preferred_script_path):
-                command = f'"{preferred_script_path}"'
-                qq_account = self.config.get("qq_account")
-                if qq_account:
-                    command += f" {qq_account}"
-                
-                process = process_manager.start_in_new_cmd(command, napcat_dir, f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)")
-                if process:
-                    time.sleep(3)  # 等待NapCat启动
-                    # 询问用户是否启动成功
-                    ui.print_warning("NapCat可能启动失败，这应该不是您或我们的问题，我们可以换一种方式启动...")
-                    if ui.confirm("您的NapCat启动成功了吗？"):
-                        return True
-                    else:
-                        # 尝试启动备选脚本
-                        ui.print_info("尝试使用备选启动脚本...")
-                        fallback_script_path = os.path.join(napcat_dir, fallback_script)
-                        if os.path.exists(fallback_script_path):
-                            command = f'"{fallback_script_path}"'
-                            if qq_account:
-                                command += f" {qq_account}"
-                            process = process_manager.start_in_new_cmd(command, napcat_dir, f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)")
-                            if process:
-                                time.sleep(3)  # 等待NapCat启动
-                                return True
-            else:
-                # 首选脚本不存在，直接尝试备选脚本
-                fallback_script_path = os.path.join(napcat_dir, fallback_script)
-                if os.path.exists(fallback_script_path):
-                    ui.print_info("尝试启动 NapCat (Shell)...")
-                    command = f'"{fallback_script_path}"'
-                    qq_account = self.config.get("qq_account")
-                    if qq_account:
-                        command += f" {qq_account}"
-                    process = process_manager.start_in_new_cmd(command, napcat_dir, f"NapCatQQ - {self.config.get('version_path', 'N/A')} (Shell)")
-                    if process:
-                        time.sleep(3)  # 等待NapCat启动
-                        return True
-            return False
-        else:
-            # 默认启动方式（OneKey版本）
-            ui.print_info("尝试启动 NapCat...")
+        if not self._is_shell_version():
+            # OneKey版本的默认启动方式
+            ui.print_info("检测到 NapCat (OneKey) 版本，正在尝试启动...")
             if super().start(process_manager):
-                time.sleep(3)  # 等待NapCat启动
+                time.sleep(3)
                 return True
             return False
+
+        # --- NapCat.Shell版本的特殊启动逻辑 ---
+        ui.print_info("检测到 NapCat (Shell) 版本，正在尝试启动...")
+        napcat_path = self.config.get("napcat_path", "")
+        if not napcat_path or not os.path.exists(os.path.dirname(napcat_path)):
+            ui.print_error(f"NapCat路径配置错误或目录不存在: {napcat_path}")
+            return False
+            
+        napcat_dir = os.path.dirname(napcat_path)
+        
+        import platform
+        is_win10 = platform.release() == "10"
+        
+        preferred_script, fallback_script = (
+            ("launcher-win10-user.bat", "launcher-win10.bat") if is_win10
+            else ("launcher-user.bat", "launcher.bat")
+        )
+
+        qq_for_login = None
+        if ui.confirm("是否为 NapCat.Shell 启用快速登录？"):
+            qq_for_login = self.config.get("qq_account")
+            if qq_for_login:
+                ui.print_info(f"将使用QQ号 {qq_for_login} 进行快速登录。")
+            else:
+                ui.print_warning("配置中未找到有效的QQ号 (qq_account)，将不使用快速登录。")
+
+        preferred_path = os.path.join(napcat_dir, preferred_script)
+        fallback_path = os.path.join(napcat_dir, fallback_script)
+
+        ui.print_info(f"步骤 1/2: 尝试使用首选脚本 '{preferred_script}'")
+        result = self._try_launch_shell_script(preferred_path, napcat_dir, process_manager, qq_for_login)
+
+        if result is True:
+            return True
+
+        if result is False or result is None:
+            ui.print_info(f"步骤 2/2: 尝试使用备用脚本 '{fallback_script}'")
+            if self._try_launch_shell_script(fallback_path, napcat_dir, process_manager, qq_for_login):
+                return True
+
+        ui.print_error("所有 NapCat (Shell) 启动方式均已尝试失败。")
+        return False
 
 
 class _AdapterComponent(_LaunchComponent):
@@ -320,12 +433,25 @@ class _AdapterComponent(_LaunchComponent):
         
         python_cmd = MaiLauncher._get_python_command(self.config, adapter_path)
         command = f"{python_cmd} main.py"
-        title = f"麦麦适配器 - {self.config.get('version_path', 'N/A')}"
+        bot_nickname = self.config.get('nickname_path', '适配器')
+        version = self.config.get('version_path', 'N/A')
+        title = f"{bot_nickname} - 适配器 v{version}"
         return command, adapter_path, title
     
     def start(self, process_manager: _ProcessManager) -> bool:
         if not self.is_enabled:
             return True
+        
+        # 获取bot类型以检查是否为MoFox_bot
+        bot_type = self.config.get("bot_type", "MaiBot")
+        adapter_path = self.config.get("adapter_path", "")
+        
+        # 对于MoFox_bot类型，如果适配器目录不存在，仅提醒用户并跳过启动
+        if bot_type == "MoFox_bot" and adapter_path and not os.path.exists(adapter_path):
+            ui.print_warning("MoFox_bot启动时检测到适配器目录不存在，将跳过适配器启动")
+            ui.print_info("适配器目录路径: " + adapter_path)
+            return True
+        
         ui.print_info("尝试启动适配器...")
         if super().start(process_manager):
             time.sleep(2) # 等待适配器启动
@@ -341,46 +467,70 @@ class _WebUIComponent(_LaunchComponent):
     def check_enabled(self):
         self.is_enabled = self.config.get("install_options", {}).get("install_webui", False)
 
+    def _resolve_bun_command(self, webui_path: str) -> Optional[str]:
+        """Try to find a bun executable either globally or within the project."""
+        candidates = [
+            "bun.exe",
+            "bun.cmd",
+            "bun"
+        ] if os.name == "nt" else ["bun"]
+
+        for candidate in candidates:
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+
+        local_bin = os.path.join(
+            webui_path,
+            "node_modules",
+            ".bin",
+            "bun.cmd" if os.name == "nt" else "bun"
+        )
+        if os.path.exists(local_bin):
+            return local_bin
+
+        return None
+
     def start(self, process_manager: _ProcessManager) -> bool:
         if not self.is_enabled:
             return True
         
-        ui.print_info("尝试启动 WebUI...")
+        ui.print_info("尝试启动 MaiBot 控制面板...")
         webui_path = self.config.get("webui_path", "")
         if not (webui_path and os.path.exists(webui_path)):
             ui.print_error("WebUI路径无效或不存在")
             return False
 
         version = self.config.get('version_path', 'N/A')
-        
-        # 1. 启动HTTP服务器
-        http_server_dir = os.path.join(webui_path, "http_server")
-        http_server_main = os.path.join(http_server_dir, "main.py")
-        if not os.path.exists(http_server_main):
-            ui.print_error("未找到 http_server/main.py，WebUI 启动失败")
-            return False
-        
-        python_cmd_http = MaiLauncher._get_python_command(self.config, http_server_dir)
-        if not process_manager.start_in_new_cmd(f"{python_cmd_http} main.py", http_server_dir, f"WebUI-HTTPServer - {version}"):
+        bun_cmd = self._resolve_bun_command(webui_path)
+        if bun_cmd:
+            bun_exec = f'"{bun_cmd}"'
+        else:
+            bun_exec = "bun"
+            ui.print_warning("未在系统中找到bun，将尝试直接执行 'bun run dev'。")
+
+        # 控制面板使用bun dev服务器，统一监听7999端口
+        command = f"{bun_exec} run dev -- --port 7999"
+        title = f"MaiBot 控制面板 - {version}"
+        process = process_manager.start_in_new_cmd(command, webui_path, title)
+        if not process:
             return False
 
-        # 2. 启动Adapter
-        adapter_dir = os.path.join(webui_path, "adapter")
-        adapter_main = os.path.join(adapter_dir, "maimai_http_adapter.py")
-        if not os.path.exists(adapter_main):
-            ui.print_error("未找到 adapter/maimai_http_adapter.py，WebUI 启动失败")
-            return False
-            
-        python_cmd_adapter = MaiLauncher._get_python_command(self.config, adapter_dir)
-        if not process_manager.start_in_new_cmd(f"{python_cmd_adapter} maimai_http_adapter.py", adapter_dir, f"WebUI-Adapter - {version}"):
-            return False
-            
+        url = "http://localhost:7999"
+        ui.print_info(f"正在打开浏览器访问 {url} ...")
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            ui.print_warning(f"自动打开浏览器失败，请手动访问 {url} ({exc})")
+
         return True
 
 
 class _MaiComponent(_LaunchComponent):
     def __init__(self, config: Dict[str, Any]):
-        super().__init__("麦麦本体", config)
+        bot_type = config.get("bot_type", "MaiBot")
+        component_name = "MoFox本体" if bot_type == "MoFox_bot" else "麦麦本体"
+        super().__init__(component_name, config)
         self.is_enabled = True # 本体总是启用
 
     def get_launch_details(self) -> Optional[Tuple[str, str, str]]:
@@ -408,11 +558,12 @@ class _MaiComponent(_LaunchComponent):
                 start_file = "bot.py"
             command = f"{python_cmd} {start_file}"
             
-        title = f"麦麦本体 - {version}"
+        bot_nickname = self.config.get('nickname_path', bot_type)
+        title = f"{bot_nickname} - {self.name} v{version}"
         return command, mai_path, title
     
     def start(self, process_manager: _ProcessManager) -> bool:
-        ui.print_info("尝试启动麦麦本体...")
+        ui.print_info(f"尝试启动{self.name}...")
         return super().start(process_manager)
 
 
@@ -427,6 +578,7 @@ class MaiLauncher:
         self._process_manager = _ProcessManager()
         self._components: Dict[str, _LaunchComponent] = {}
         self._config: Optional[Dict[str, Any]] = None
+        self._process_cache: Dict[int, psutil.Process] = {}
 
     @staticmethod
     def _get_python_command(config: Dict[str, Any], cwd: str) -> str:
@@ -484,10 +636,23 @@ class MaiLauncher:
         self._register_components(config)
 
         if self._components['adapter'].is_enabled:
-            adapter_path = config.get("adapter_path", "")
-            valid, msg = validate_path(adapter_path, check_file="main.py")
-            if not valid:
-                errors.append(f"适配器路径: {msg}")
+            # 对于MoFox_bot类型，适配器目录可以不存在，仅提醒用户
+            if bot_type == "MoFox_bot":
+                adapter_path = config.get("adapter_path", "")
+                if adapter_path and not os.path.exists(adapter_path):
+                    # MoFox_bot可以不存在适配器目录，仅记录警告而非错误
+                    logger.warning("MoFox_bot启动时检测到适配器目录不存在，将跳过适配器启动", path=adapter_path)
+                elif adapter_path and os.path.exists(adapter_path):
+                    # 如果适配器目录存在，则验证main.py文件
+                    main_file = os.path.join(adapter_path, "main.py")
+                    if not os.path.exists(main_file):
+                        errors.append(f"适配器路径: 缺少必需文件: main.py")
+            else:
+                # 对于其他bot类型，严格验证适配器路径
+                adapter_path = config.get("adapter_path", "")
+                valid, msg = validate_path(adapter_path, check_file="main.py")
+                if not valid:
+                    errors.append(f"适配器路径: {msg}")
 
         if self._components['napcat'].is_enabled:
             napcat_path = config.get("napcat_path", "")
@@ -497,56 +662,128 @@ class MaiLauncher:
         return errors
 
     def show_launch_menu(self, config: Dict[str, Any]) -> bool:
-        """显示启动选择菜单并处理用户选择。"""
+        """根据bot类型显示不同的启动菜单并处理用户选择。"""
         self._register_components(config)
-        
+        bot_type = config.get("bot_type", "MaiBot")
+
         ui.clear_screen()
         ui.console.print("[🚀 启动选择菜单]", style=ui.colors["primary"])
         ui.console.print("="*50)
         ui.console.print(f"实例版本: {config.get('version_path', '未知')}")
         ui.console.print(f"实例昵称: {config.get('nickname_path', '未知')}")
+        ui.console.print(f"Bot 类型: {bot_type}")
         ui.console.print("\n[可用组件]", style=ui.colors["info"])
         
-        # 定义菜单选项
-        menu_options = {
-            "1": ("仅启动麦麦本体", ["mai"]),
-        }
-        next_key = 2
-
-        if self._components['adapter'].is_enabled:
-            menu_options[str(next_key)] = ("启动麦麦 + 适配器", ["adapter", "mai"])
-            next_key += 1
-        if self._components['napcat'].is_enabled:
-            menu_options[str(next_key)] = ("启动麦麦 + 适配器 + NapCat", ["napcat", "adapter", "mai"])
-            next_key += 1
-        if self._components['webui'].is_enabled:
-            menu_options[str(next_key)] = ("启动麦麦 + WebUI", ["webui", "mai"])
-            next_key += 1
-        
-        enabled_components = [c for c in self._components.values() if c.is_enabled and c.name != "麦麦本体"]
-        if len(enabled_components) >= 2:
-            menu_options[str(next_key)] = ("全栈启动 (所有已安装组件)", ["full_stack"])
-
-        # 打印组件状态和菜单
+        # 打印组件状态
         for comp in self._components.values():
-            if comp.name != "麦麦本体":
-                 ui.console.print(f"  • {comp.name}: {'✅ 可用' if comp.is_enabled else '❌ 未配置'}")
-        ui.console.print(f"  • 麦麦本体: ✅ 可用")
+            if "本体" not in comp.name:
+                ui.console.print(f"  • {comp.name}: {'✅ 可用' if comp.is_enabled else '❌ 未配置'}")
+        # Find and print the main component last
+        main_comp = next((c for c in self._components.values() if "本体" in c.name), None)
+        if main_comp:
+            ui.console.print(f"  • {main_comp.name}: ✅ 可用")
 
-        ui.console.print("\n[启动选项]", style=ui.colors["success"])
+        # 根据 bot_type 定义菜单
+        if bot_type == "MaiBot":
+            menu_options = {
+                "1": ("主程序+适配器", ["mai", "adapter"]),
+                "2": ("主程序+适配器+NapCatQQ", ["mai", "adapter", "napcat"]),
+                "3": ("主程序+适配器+检查MongoDB", ["mai", "adapter", "mongodb"]),
+                "4": ("主程序+适配器+NapCatQQ+检查MongoDB", ["mai", "adapter", "napcat", "mongodb"]),
+            }
+            # 如果控制面板可用，添加包含控制面板的启动选项
+            if self._components['webui'].is_enabled:
+                menu_options["5"] = ("主程序+适配器+控制面板", ["mai", "adapter", "webui"])
+                menu_options["6"] = ("主程序+适配器+NapCat+控制面板", ["mai", "adapter", "napcat", "webui"])
+        elif bot_type == "MoFox_bot":
+            menu_options = {
+                "1": ("主程序", ["mai"]),
+                "2": ("主程序+适配器", ["mai", "adapter"]),
+                "3": ("主程序+NapCatQQ", ["mai", "napcat"]),
+                "4": ("主程序+适配器+NapCatQQ", ["mai", "adapter", "napcat"]),
+            }
+        else:
+            # 默认或未知bot类型的菜单
+            menu_options = {
+                "1": ("仅启动主程序", ["mai"]),
+            }
+
+        ui.console.print("\n[预设启动项]", style=ui.colors["success"])
         for key, (text, _) in menu_options.items():
             ui.console.print(f" [{key}] {text}")
-        ui.console.print(" [Q] 返回上级菜单", style="#7E1DE4")
+        
+        ui.console.print(f" [H] 高级启动项", style=ui.colors["warning"])
+        ui.console.print(f" [Q] 返回", style=ui.colors["exit"])
 
         while True:
             choice = ui.get_input("请选择启动方式: ").strip().upper()
             if choice == 'Q':
                 return False
+            if choice == 'H':
+                return self._show_advanced_launch_menu()
             if choice in menu_options:
+                # 检查所选选项中的组件是否都已启用
                 _, components_to_start = menu_options[choice]
-                return self.launch(components_to_start)
+                all_enabled = True
+                for comp_name in components_to_start:
+                    if not self._components[comp_name].is_enabled:
+                        ui.print_error(f"组件 '{self._components[comp_name].name}' 未配置或未启用，无法使用该启动项。")
+                        all_enabled = False
+                        break
+                if all_enabled:
+                    return self.launch(components_to_start)
             else:
                 ui.print_error("无效选项，请重新选择。")
+
+    def _show_advanced_launch_menu(self) -> bool:
+        """显示高级启动菜单，支持多选。"""
+        ui.clear_screen()
+        ui.console.print("[🛠️ 高级启动项]", style=ui.colors["warning"])
+        ui.console.print("="*50)
+        ui.console.print("可多选，请使用英文逗号','分隔选项（例如: 1,3）")
+
+        advanced_options = {
+            "1": ("主程序", "mai"),
+            "2": ("适配器", "adapter"),
+            "3": ("NapCatQQ", "napcat"),
+            "4": ("检查MongoDB", "mongodb"),
+            "5": ("控制面板", "webui"),
+        }
+        
+        for key, (text, comp_name) in advanced_options.items():
+            is_enabled = self._components[comp_name].is_enabled
+            status = '✅ 可用' if is_enabled else '❌ 未配置'
+            ui.console.print(f" [{key}] {text} - {status}")
+
+        ui.console.print(f" [Q] 返回", style=ui.colors["exit"])
+
+        while True:
+            choices_str = ui.get_input("请选择要启动的组件: ").strip().upper()
+            if choices_str == 'Q':
+                return False
+
+            choices = [c.strip() for c in choices_str.split(',')]
+            components_to_start = []
+            valid_choices = True
+
+            for choice in choices:
+                if choice in advanced_options:
+                    _, comp_name = advanced_options[choice]
+                    if self._components[comp_name].is_enabled:
+                        components_to_start.append(comp_name)
+                    else:
+                        ui.print_error(f"组件 '{self._components[comp_name].name}' 未配置，无法启动。")
+                        valid_choices = False
+                        break
+                else:
+                    ui.print_error(f"无效选项 '{choice}'。")
+                    valid_choices = False
+                    break
+            
+            if valid_choices and components_to_start:
+                return self.launch(list(dict.fromkeys(components_to_start))) # 去重并保持顺序
+            elif valid_choices and not components_to_start:
+                ui.print_warning("未选择任何有效组件。")
 
     def launch(self, components_to_start: List[str]) -> bool:
         """根据给定的组件列表启动。"""
@@ -586,24 +823,102 @@ class MaiLauncher:
         """停止所有由启动器启动的进程。"""
         ui.print_info("正在停止所有相关进程...")
         self._process_manager.stop_all()
+    
+    def stop_process(self, pid: int) -> bool:
+        """停止单个托管进程。"""
+        return self._process_manager.stop_process(pid)
+
+    def restart_process(self, pid: int) -> bool:
+        """重启单个托管进程。"""
+        return self._process_manager.restart_process(pid)
+
+    def get_managed_pids(self) -> List[int]:
+        """获取所有当前受管进程的PID列表。"""
+        # 添加启动器自身的PID
+        pids = [os.getpid()]
+        # 添加所有由_process_manager管理的子进程PID
+        pids.extend([info["process"].pid for info in self._process_manager.running_processes if info.get("process") and info["process"].poll() is None])
+        return pids
 
     def show_running_processes(self):
-        """显示当前正在运行的进程状态。"""
-        active_processes = self._process_manager.get_running_processes_info()
+        """以表格形式显示当前正在运行的进程状态，并使用缓存计算CPU。"""
+        managed_procs_info = self._process_manager.get_running_processes_info()
         
-        if not active_processes:
+        table = Table(title="[📊 进程状态管理]", show_header=True, header_style="bold magenta")
+        table.add_column("PID", style="dim", width=8)
+        table.add_column("进程名称", style="cyan", no_wrap=True)
+        table.add_column("CPU %", style="green", justify="right")
+        table.add_column("内存 (MB)", style="yellow", justify="right")
+        table.add_column("运行时间 (s)", style="blue", justify="right")
+
+        current_pids = {info["process"].pid for info in managed_procs_info}
+        current_pids.add(os.getpid())
+
+        # 清理已结束进程的缓存
+        for pid in list(self._process_cache.keys()):
+            if pid not in current_pids:
+                del self._process_cache[pid]
+        
+        all_process_meta = [{"pid": os.getpid(), "title": "麦麦启动器 (主程序)"}]
+        for info in managed_procs_info:
+            all_process_meta.append({"pid": info["process"].pid, "title": info["title"], "start_time": info["start_time"]})
+
+        if not all_process_meta:
             ui.print_info("当前没有由本启动器启动的正在运行的进程。")
-            return
+            return table
+
+        for meta in all_process_meta:
+            pid = meta["pid"]
+            try:
+                p = self._process_cache.get(pid)
+                if p is None:
+                    p = psutil.Process(pid)
+                    p.cpu_percent()  # 第一次调用返回0，但会初始化计时器
+                    self._process_cache[pid] = p
+                    cpu_percent = 0.0
+                else:
+                    cpu_percent = p.cpu_percent() # 后续调用将返回有意义的值
+                
+                memory_mb = p.memory_info().rss / (1024 * 1024)
+                running_time = time.time() - (meta.get("start_time") or p.create_time())
+
+                table.add_row(
+                    str(pid),
+                    meta['title'],
+                    f"{cpu_percent:.2f}",
+                    f"{memory_mb:.2f}",
+                    f"{int(running_time)}"
+                )
+            except (psutil.NoSuchProcess, Exception) as e:
+                logger.warning("获取进程信息失败", pid=pid, error=str(e))
+                if pid in self._process_cache:
+                    del self._process_cache[pid]
         
-        ui.console.print("\n[📊 正在运行的进程]", style=ui.colors["primary"])
-        for info in active_processes:
-            running_time = int(info["running_time"])
-            ui.console.print(
-                f"• {info['title']} - 运行时间: {running_time}秒",
-                style=ui.colors["success"]
-            )
-            ui.console.print(f"  路径: {info['cwd']}", style="dim")
-            ui.console.print(f"  命令: {info['command']}", style="dim")
+        return table
+
+    def get_process_details(self, pid: int) -> Optional[Dict[str, Any]]:
+        """获取单个进程的详细信息（不包括冲突的CPU数据）。"""
+        try:
+            p = psutil.Process(pid)
+            managed_info = next((info for info in self._process_manager.running_processes if info.get("process") and info["process"].pid == pid), None)
+            
+            details = {
+                "PID": p.pid,
+                "名称": p.name(),
+                "状态": p.status(),
+                "内存 (MB)": f"{p.memory_info().rss / (1024 * 1024):.2f}",
+                "启动时间": datetime.fromtimestamp(p.create_time()).strftime("%Y-%m-%d %H:%M:%S"),
+                "命令行": " ".join(p.cmdline()),
+                "工作目录": p.cwd(),
+                "父进程ID": p.ppid(),
+            }
+            if managed_info:
+                details["托管标题"] = managed_info["title"]
+
+            return details
+        except (psutil.NoSuchProcess, Exception) as e:
+            logger.warning("获取进程详细信息失败", pid=pid, error=str(e))
+            return None
 
 
 # 全局启动器实例

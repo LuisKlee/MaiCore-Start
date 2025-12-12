@@ -3,9 +3,10 @@
 UI主题模块
 负责定义颜色、样式等视觉元素
 """
+from src.core.p_config import p_config_manager
 
-# 颜色定义
-COLORS = {
+# 默认颜色定义 (作为备用)
+DEFAULT_COLORS = {
     "primary": "#BADFFA",
     "success": "#4AF933",
     "warning": "#F2FF5D",
@@ -22,7 +23,11 @@ COLORS = {
     "white": "white",
     "green": "green",
     "blue": "#005CFA",
+    "attention":"#FF45F6"
 }
+
+# 从配置文件加载颜色，如果失败则使用默认值
+COLORS = p_config_manager.get_theme_colors() or DEFAULT_COLORS
 
 # 符号定义
 SYMBOLS = {
@@ -46,4 +51,7 @@ SYMBOLS = {
     "validate": "🔍",
     "new": "✨",
     "plugin": "🧩",
+    "attention": "🚨",
+    "download": "📥",
+    "refresh": ""
 }

@@ -7,25 +7,6 @@ from fastapi.staticfiles import StaticFiles
 import os
 import json
 
-# 虚拟环境自启动逻辑
-import sys
-def _maybe_restart_in_venv():
-    # 仅在直接运行时生效
-    if not hasattr(sys, 'argv') or not sys.argv or not __name__ == "__main__":
-        return
-    venv_candidates = ["venv", ".venv", "env", ".env"]
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
-    for venv_name in venv_candidates:
-        venv_python = os.path.join(base_dir, venv_name, "Scripts", "python.exe")
-        if os.path.exists(venv_python):
-            # 检查当前 python 路径
-            if os.path.abspath(sys.executable) != os.path.abspath(venv_python):
-                print(f"[INFO] 检测到虚拟环境，自动用 {venv_python} 重启...")
-                os.execv(venv_python, [venv_python] + sys.argv)
-            break
-
-_maybe_restart_in_venv()
-
 app = FastAPI()
 
 app.add_middleware(
@@ -90,7 +71,10 @@ async def update_config(name: str, request: Request):
     data = await request.json()
     if name in config["configurations"]:
         for k, v in data.items():
-            config["configurations"][name][k] = v
+            if k == "absolute_serial_number":
+                config["configurations"][name][k] = int(v)
+            else:
+                config["configurations"][name][k] = v
         save_config(config)
         return {"success": True}
     return {"success": False, "msg": "配置不存在"}
@@ -116,7 +100,7 @@ async def create_config(request: Request):
     abs_num = len(used_nums) + 1
     while abs_num in used_nums:
         abs_num += 1
-    new_config["absolute_serial_number"] = str(abs_num)
+    new_config["absolute_serial_number"] = abs_num
     # 路径校验
     for k in ["mai_path", "mofox_path", "adapter_path", "napcat_path", "venv_path", "mongodb_path", "webui_path"]:
         if not is_valid_path(new_config.get(k, "")):

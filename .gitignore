@@ -1,9 +1,39 @@
-__pycache__/
-config.toml
+git check-ignore -v path/to/file.pyc# --- System & Virtual Environments ---
+# Python virtual environment
+/venv/
+/env/
+/.venv/
+
+# Python cache files
+**/__pycache__/
+**/*.pyc
 *.pyc
+
+# --- Configuration Files (User Specific) ---
+# Main user configuration, should not be versioned
+/config.toml
+# UI configuration file
+/.config_UI.json
+
+# --- Temporary & Build Files ---
+# Zip archives
+*.zip
+
+# --- Other ---
+# A test directory that should be ignored
 test-but-napcat-on-lunix
-venv
-mongodb.zip
-.config_UI.json
-utils/__pycache__/
-utils/__pycache__/
+
+# --- 忽略日志文件 ---
+*.jsonl
+log/
+
+## --- 忽略程序配置文件 ---
+config/
+config.toml
+config_UI.json
+P-config.toml
+
+node_modules
+
+# --- 忽略临时文件夹 ---
+Temporary/
