@@ -5,6 +5,8 @@
 import sys
 import os
 import time
+import threading
+from pathlib import Path
 from typing import Tuple, Any
 
 # 添加项目根目录到Python路径
@@ -18,6 +20,7 @@ from src.modules.launcher import launcher
 from src.modules.config_manager import config_mgr
 from src.modules.knowledge import knowledge_builder
 from src.utils.common import setup_console
+from src.utils.system_tray import SystemTrayManager
 from src.core.p_config import p_config_manager
  
 # 设置日志
@@ -31,6 +34,11 @@ class MaiMaiLauncher:
     def __init__(self):
         self.running = True
         self._keep_processes_on_exit = False
+        base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+        self.tray_manager = SystemTrayManager(base_dir / "output.ico")
+        self.tray_manager.apply_console_icon()
+        self._tray_restore_event = threading.Event()
+        self._tray_exit_event = threading.Event()
         setup_console()
         logger.info("麦麦启动器已启动")
     
@@ -345,9 +353,17 @@ class MaiMaiLauncher:
             current_colors = p_config_manager.get_theme_colors()
             current_log_days = p_config_manager.get("logging.log_rotation_days", 30)
             on_exit_action = p_config_manager.get("on_exit.process_action", "ask")
-            ui.show_program_settings_menu(current_colors, current_log_days, on_exit_action)
+            minimize_to_tray = p_config_manager.get("ui.minimize_to_tray", False)
+            notifications_enabled = p_config_manager.get("notifications.windows_center_enabled", False)
+            ui.show_program_settings_menu(
+                current_colors,
+                current_log_days,
+                on_exit_action,
+                minimize_to_tray,
+                notifications_enabled,
+            )
             
-            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "Q"])
+            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "T", "N", "Q"])
             
             if choice == "Q":
                 break
@@ -428,6 +444,20 @@ class MaiMaiLauncher:
                     else:
                         ui.print_error("恢复默认设置失败。")
                     ui.pause()
+            elif choice == "T":
+                new_value = not minimize_to_tray
+                p_config_manager.set("ui.minimize_to_tray", new_value)
+                p_config_manager.save()
+                state_text = "开启" if new_value else "关闭"
+                ui.print_success(f"最小化到托盘功能已{state_text}。")
+                ui.pause()
+            elif choice == "N":
+                new_value = not notifications_enabled
+                p_config_manager.set("notifications.windows_center_enabled", new_value)
+                p_config_manager.save()
+                state_text = "开启" if new_value else "关闭"
+                ui.print_success(f"Windows 通知功能已{state_text}。")
+                ui.pause()
 
     def handle_component_download(self):
         """处理组件下载"""
@@ -739,6 +769,85 @@ class MaiMaiLauncher:
         
         return ("message", f"未知命令: '{cmd}'", "red")
 
+    def _try_minimize_to_tray(self) -> bool:
+        """Attempt to minimize the launcher to the system tray when enabled."""
+        if not p_config_manager.get("ui.minimize_to_tray", False):
+            return False
+
+        if not self.tray_manager.is_supported():
+            ui.print_warning("当前环境不支持最小化到系统托盘功能。")
+            return False
+
+        ui.print_info("正在最小化到系统托盘，可通过托盘图标恢复或退出。")
+        logger.info("用户启用了最小化到托盘功能")
+
+        self._tray_restore_event.clear()
+        self._tray_exit_event.clear()
+
+        if not self.tray_manager.minimize(
+            on_restore=lambda: self._tray_restore_event.set(),
+            on_exit=lambda: self._tray_exit_event.set(),
+        ):
+            ui.print_error("最小化到托盘失败，请检查 output.ico 是否存在。")
+            return False
+
+        while True:
+            if self._tray_exit_event.wait(timeout=0.2):
+                self._tray_exit_event.clear()
+                logger.info("托盘菜单请求退出程序")
+                self._handle_exit_request()
+                return True
+
+            if self._tray_restore_event.is_set():
+                self._tray_restore_event.clear()
+                ui.print_info("已从系统托盘恢复。")
+                logger.info("用户从托盘恢复窗口")
+                return True
+
+    def _handle_exit_request(self) -> bool:
+        """统一处理退出逻辑，返回是否完成退出。"""
+        has_child_processes = len(launcher.get_managed_pids()) > 1
+        action = p_config_manager.get("on_exit.process_action", "ask")
+
+        do_exit = False
+        if not has_child_processes:
+            do_exit = True
+        elif action == "terminate":
+            ui.print_info("根据设置，将关闭所有托管进程...")
+            launcher.stop_all_processes()
+            do_exit = True
+        elif action == "keep":
+            ui.print_info("根据设置，将保留所有托管进程...")
+            self._keep_processes_on_exit = True
+            do_exit = True
+        else:
+            ui.print_warning("检测到有正在运行的机器人进程。")
+            while True:
+                choice_exit = ui.get_input("退出启动器时要如何处理这些进程？[K]保留 [T]关闭 [C]取消退出: ").upper()
+                if choice_exit == 'K':
+                    ui.print_info("将保留所有托管进程...")
+                    self._keep_processes_on_exit = True
+                    do_exit = True
+                    logger.info("用户选择保留进程并退出")
+                    break
+                elif choice_exit == 'T':
+                    ui.print_info("将关闭所有托管进程...")
+                    launcher.stop_all_processes()
+                    do_exit = True
+                    logger.info("用户选择关闭进程并退出")
+                    break
+                elif choice_exit == 'C':
+                    logger.info("用户取消退出程序")
+                    break
+                else:
+                    ui.print_error("无效输入。")
+
+        if do_exit:
+            self.running = False
+            ui.print_info("感谢使用麦麦启动器！")
+            logger.info("用户退出程序")
+        return do_exit
+
     def run(self):
         """运行主程序"""
         try:
@@ -751,47 +860,9 @@ class MaiMaiLauncher:
                 logger.debug("用户选择", choice=choice)
                 
                 if choice == "Q":
-                    has_child_processes = len(launcher.get_managed_pids()) > 1
-                    action = p_config_manager.get("on_exit.process_action", "ask")
-
-                    do_exit = False
-                    # 如果没有子进程，直接退出
-                    if not has_child_processes:
-                        do_exit = True
-                    elif action == "terminate":
-                        ui.print_info("根据设置，将关闭所有托管进程...")
-                        launcher.stop_all_processes()
-                        do_exit = True
-                    elif action == "keep":
-                        ui.print_info("根据设置，将保留所有托管进程...")
-                        self._keep_processes_on_exit = True
-                        do_exit = True
-                    else:  # "ask" or default
-                        ui.print_warning("检测到有正在运行的机器人进程。")
-                        while True:
-                            choice_exit = ui.get_input("退出启动器时要如何处理这些进程？[K]保留 [T]关闭 [C]取消退出: ").upper()
-                            if choice_exit == 'K':
-                                ui.print_info("将保留所有托管进程...")
-                                self._keep_processes_on_exit = True
-                                do_exit = True
-                                logger.info("用户选择保留进程并退出")
-                                break
-                            elif choice_exit == 'T':
-                                ui.print_info("将关闭所有托管进程...")
-                                launcher.stop_all_processes()
-                                do_exit = True
-                                logger.info("用户选择关闭进程并退出")
-                                break
-                            elif choice_exit == 'C':
-                                logger.info("用户取消退出程序")
-                                break  # breaks inner while, do_exit remains false
-                            else:
-                                ui.print_error("无效输入。")
-
-                    if do_exit:
-                        self.running = False
-                        ui.print_info("感谢使用麦麦启动器！")
-                        logger.info("用户退出程序")
+                    if self._try_minimize_to_tray():
+                        continue
+                    self._handle_exit_request()
                 elif choice == "A":
                     self.handle_launch_mai()
                 elif choice == "B":
@@ -833,6 +904,7 @@ class MaiMaiLauncher:
             ui.print_error(f"程序运行出错：{str(e)}")
             logger.error("程序运行异常", error=str(e))
         finally:
+            self.tray_manager.stop()
             # 除非明确指示，否则停止所有进程
             if not self._keep_processes_on_exit:
                 launcher.stop_all_processes()

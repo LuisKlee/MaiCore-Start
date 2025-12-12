@@ -166,7 +166,14 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         self.console.print("====>>返回<<====")
         self.console.print(f" [Q] {self.symbols['back']} 返回上级", style=self.colors["exit"])
 
-    def show_program_settings_menu(self, current_colors: dict, current_log_days: int, on_exit_action: str):
+    def show_program_settings_menu(
+        self,
+        current_colors: dict,
+        current_log_days: int,
+        on_exit_action: str,
+        minimize_to_tray_enabled: bool,
+        notifications_enabled: bool,
+    ):
         """显示程序设置菜单"""
         from rich.table import Table
         panel = Panel(
@@ -187,6 +194,16 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         action_map = {"ask": "询问", "terminate": "一律关闭", "keep": "一律保留"}
         self.console.print(f"  退出时对机器人进程的操作: [bold yellow]{action_map.get(on_exit_action, '未知')}[/bold yellow]")
 
+        # 显示托盘设置
+        self.console.print("\n[bold]托盘设置[/bold]")
+        tray_status = "开启" if minimize_to_tray_enabled else "关闭"
+        self.console.print(f"  最小化到系统托盘: [bold yellow]{tray_status}[/bold yellow]")
+
+        # 显示通知设置
+        self.console.print("\n[bold]通知设置[/bold]")
+        notify_status = "开启" if notifications_enabled else "关闭"
+        self.console.print(f"  Windows 通知中心推送: [bold yellow]{notify_status}[/bold yellow]")
+
         # 显示当前颜色设置
         table = Table(title="当前主题颜色", show_header=True, header_style="bold magenta")
         table.add_column("选项", style="dim", width=6)
@@ -203,6 +220,8 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         self.console.print(f" [L] {self.symbols['edit']} 修改日志保留天数", style=self.colors["success"])
         self.console.print(f" [E] {self.symbols['edit']} 修改退出时操作", style=self.colors["success"])
         self.console.print(f" [C] {self.symbols['edit']} 修改颜色 (输入选项数字)", style=self.colors["success"])
+        self.console.print(f" [T] {self.symbols['edit']} 切换最小化到托盘", style=self.colors["secondary"])
+        self.console.print(f" [N] {self.symbols['edit']} 切换Windows通知", style=self.colors["primary"])
         self.console.print(f" [R] {self.symbols['back']} 恢复默认设置", style=self.colors["error"])
         
         self.console.print("====>>返回<<====")

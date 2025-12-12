@@ -43,6 +43,12 @@ class PConfig:
         },
         "on_exit": {
             "process_action": "ask"
+        },
+        "notifications": {
+            "windows_center_enabled": False
+        },
+        "ui": {
+            "minimize_to_tray": False
         }
     }
 

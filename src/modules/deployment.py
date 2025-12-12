@@ -4,6 +4,7 @@
 负责实例的部署、更新和删除操作
 使用模块化的部署器来处理不同Bot类型的部署
 """
+import logging
 import os
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from ..core.logging import set_console_log_level, reset_console_log_level
 from ..ui.interface import ui
 from ..utils.common import validate_path, open_files_in_editor
 from ..utils.version_detector import compare_versions
+from ..utils.notifier import windows_notifier, NotificationLogHandler
 from .mongodb_installer import mongodb_installer
 from .webui_installer import webui_installer
 
@@ -44,6 +46,15 @@ class DeploymentManager:
     def deploy_instance(self) -> bool:
         """部署新实例 - 重构版本"""
         set_console_log_level("WARNING")
+        notification_handler = None
+        root_logger = None
+        should_notify = windows_notifier.is_enabled()
+        if should_notify:
+            notification_handler = NotificationLogHandler(windows_notifier, title="部署告警")
+            notification_handler.setLevel(logging.WARNING)
+            notification_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+            root_logger = logging.getLogger()
+            root_logger.addHandler(notification_handler)
         try:
             ui.clear_screen()
             ui.components.show_title("实例部署助手", symbol="🚀")
@@ -76,13 +87,19 @@ class DeploymentManager:
             self._show_post_deployment_info(paths.get(bot_path_key, ""), deploy_config, paths.get("adapter_path", ""))
 
             logger.info("实例部署完成", serial=deploy_config['serial_number'])
+            if should_notify:
+                windows_notifier.send("部署完成", f"实例 {deploy_config['nickname']} 已成功部署。")
             return True
 
         except Exception as e:
             ui.print_error(f"部署失败：{str(e)}")
             logger.error("实例部署失败", error=str(e))
+            if should_notify:
+                windows_notifier.send("部署失败", f"实例部署失败：{str(e)}")
             return False
         finally:
+            if root_logger and notification_handler:
+                root_logger.removeHandler(notification_handler)
             reset_console_log_level()
     
     def _check_network_for_deployment(self) -> bool:

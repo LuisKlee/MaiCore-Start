@@ -61,11 +61,24 @@ class UI:
         """显示配置检查菜单（保持兼容性）"""
         self.show_config_management_menu()
 
-    def show_program_settings_menu(self, current_colors: Dict[str, Any], current_log_days: int, on_exit_action: str):
+    def show_program_settings_menu(
+        self,
+        current_colors: Dict[str, Any],
+        current_log_days: int,
+        on_exit_action: str,
+        minimize_to_tray_enabled: bool,
+        notifications_enabled: bool,
+    ):
         """显示程序设置菜单"""
         self.clear_screen()
         logger.info("显示程序设置菜单")
-        self.menus.show_program_settings_menu(current_colors, current_log_days, on_exit_action)
+        self.menus.show_program_settings_menu(
+            current_colors,
+            current_log_days,
+            on_exit_action,
+            minimize_to_tray_enabled,
+            notifications_enabled,
+        )
 
     def show_plugin_menu(self):
         """显示插件管理菜单"""
