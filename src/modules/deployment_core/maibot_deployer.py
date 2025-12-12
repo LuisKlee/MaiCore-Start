@@ -321,14 +321,15 @@ class MaiBotDeployer(BaseDeployer):
                 else:
                     ui.print_warning(f"⚠️ 未找到模板: {model_config_template}")
                 
-                # 复制 plugin_config_template.toml
-                plugin_template = os.path.join(template_dir, "plugin_config_template.toml")
-                plugin_target = os.path.join(config_dir, "plugin_config.toml")
-                if os.path.exists(plugin_template):
-                    shutil.copy2(plugin_template, plugin_target)
-                    ui.print_success("✅ plugin_config.toml 配置完成")
-                else:
-                    ui.print_warning(f"⚠️ 未找到模板: plugin_config_template.toml")
+                # 仅在部署MoFox_bot实例时处理插件配置
+                if deploy_config.get("bot_type") == "MoFox_bot":
+                    plugin_template = os.path.join(template_dir, "plugin_config_template.toml")
+                    plugin_target = os.path.join(config_dir, "plugin_config.toml")
+                    if os.path.exists(plugin_template):
+                        shutil.copy2(plugin_template, plugin_target)
+                        ui.print_success("✅ plugin_config.toml 配置完成")
+                    else:
+                        ui.print_warning(f"⚠️ 未找到模板: plugin_config_template.toml")
             
             # Case: 其他所有情况 (旧版MaiBot, MaiBot分支)
             else:

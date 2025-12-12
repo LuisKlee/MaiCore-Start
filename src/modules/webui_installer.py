@@ -29,10 +29,12 @@ class WebUIInstaller:
     """WebUI安装器类"""
     
     def __init__(self):
-        self.webui_repo = "minecraft1024a/MaiMbot-WEBui-adapter"
+        self.webui_repo = "Mai-with-u/MaiBot-Dashboard"
         self.webui_cache_dir = Path.home() / ".maibot" / "webui_cache"
+        self.dashboard_dir_name = "MaiBot-Dashboard"
         self.webui_cache_dir.mkdir(parents=True, exist_ok=True)
         self._offline_mode = False
+        self._bun_candidates = ["bun", "bun.exe", "bun.cmd"]
     
     def check_nodejs_installed(self) -> Tuple[bool, str]:
         """检查Node.js是否已安装"""
@@ -235,6 +237,59 @@ class WebUIInstaller:
         ui.print_error(f"下载失败：达到最大重试次数 {max_retries}")
         logger.error("文件下载失败", url=url)
         return False
+
+    def _run_command(self, command: List[str], cwd: Optional[str] = None, description: str = "") -> Tuple[bool, str]:
+        """Run a shell command and stream results."""
+        try:
+            if description:
+                ui.print_info(description)
+            cmd_display = " ".join(command)
+            result = subprocess.run(
+                command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                shell=False,
+                timeout=600,
+            )
+            if result.returncode == 0:
+                if description:
+                    ui.print_success(f"{description} 完成")
+                return True, result.stdout
+            ui.print_error(f"命令执行失败: {cmd_display}\n{result.stderr}")
+            logger.error("命令执行失败", command=cmd_display, stderr=result.stderr)
+            return False, result.stderr
+        except subprocess.TimeoutExpired:
+            ui.print_error(f"命令超时: {cmd_display}")
+            logger.error("命令超时", command=cmd_display)
+            return False, "timeout"
+        except Exception as exc:
+            ui.print_error(f"命令执行异常: {exc}")
+            logger.error("命令执行异常", command=cmd_display, error=str(exc))
+            return False, str(exc)
+
+    def _resolve_command(self, candidates: List[str]) -> Optional[str]:
+        """Return the first executable found in PATH for given candidates."""
+        for candidate in candidates:
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+        return None
+
+    def _find_bun_executable(self, dashboard_dir: str) -> Optional[str]:
+        """Locate a bun executable, preferring system PATH then local node_modules/.bin."""
+        bun_cmd = self._resolve_command(self._bun_candidates)
+        if bun_cmd:
+            return bun_cmd
+        local_bin = os.path.join(
+            dashboard_dir,
+            "node_modules",
+            ".bin",
+            "bun.cmd" if platform.system() == "Windows" else "bun"
+        )
+        if os.path.exists(local_bin):
+            return local_bin
+        return None
     def get_webui_branches(self) -> List[Dict]:
         """获取WebUI分支列表"""
         try:
@@ -268,7 +323,7 @@ class WebUIInstaller:
         """显示WebUI分支选择菜单"""
         try:
             ui.clear_screen()
-            ui.console.print("[🌐 选择WebUI分支]", style=ui.colors["primary"])
+            ui.console.print("[🌐 选择控制面板分支]", style=ui.colors["primary"])
             ui.console.print("="*40)
             
             branches = self.get_webui_branches()
@@ -294,7 +349,7 @@ class WebUIInstaller:
                 )
             
             ui.console.print(table)
-            ui.console.print("\n[Q] 跳过WebUI安装", style="#7E1DE4")
+            ui.console.print("\n[Q] 跳过控制面板安装", style="#7E1DE4")
             
             while True:
                 choice = ui.get_input("请选择WebUI分支：").strip()
@@ -319,22 +374,19 @@ class WebUIInstaller:
             return None
     
     def download_webui(self, branch_info: Dict, install_dir: str) -> Optional[str]:
-        """下载WebUI"""
+        """下载并安装MaiBot控制面板源码。"""
         try:
-            ui.print_info(f"正在下载WebUI {branch_info['display_name']}...")
-            
+            ui.print_info(f"正在下载控制面板 {branch_info['display_name']}...")
+            os.makedirs(install_dir, exist_ok=True)
+
             with tempfile.TemporaryDirectory() as temp_dir:
-                # 下载WebUI源码
-                download_url = branch_info["download_url"]
-                archive_path = os.path.join(temp_dir, f"webui_{branch_info['name']}.zip")
-                
-                response = requests.get(download_url, stream=True, timeout=60, verify=False)
+                archive_path = os.path.join(temp_dir, f"dashboard_{branch_info['name']}.zip")
+                response = requests.get(branch_info["download_url"], stream=True, timeout=60, verify=False)
                 response.raise_for_status()
-                
+
                 total_size = int(response.headers.get('content-length', 0))
-                
-                with open(archive_path, 'wb') as f, tqdm(
-                    desc=f"webui_{branch_info['name']}.zip",
+                with open(archive_path, 'wb') as archive_file, tqdm(
+                    desc=os.path.basename(archive_path),
                     total=total_size,
                     unit='iB',
                     unit_scale=True,
@@ -342,154 +394,119 @@ class WebUIInstaller:
                 ) as progress_bar:
                     for chunk in response.iter_content(chunk_size=8192):
                         if chunk:
-                            f.write(chunk)
+                            archive_file.write(chunk)
                             progress_bar.update(len(chunk))
-                
-                # 解压WebUI
-                ui.print_info("正在解压WebUI...")
-                extract_dir = os.path.join(temp_dir, "webui_extract")
-                
+
+                extract_dir = os.path.join(temp_dir, "dashboard_extract")
+                ui.print_info("正在解压控制面板...")
                 with zipfile.ZipFile(archive_path, 'r') as zip_ref:
                     zip_ref.extractall(extract_dir)
-                
-                # 查找解压后的目录
-                extracted_dirs = [d for d in os.listdir(extract_dir) 
-                                if os.path.isdir(os.path.join(extract_dir, d)) and d != "__MACOSX"]
-                
+
+                extracted_dirs = [
+                    d for d in os.listdir(extract_dir)
+                    if os.path.isdir(os.path.join(extract_dir, d)) and d != "__MACOSX"
+                ]
                 if not extracted_dirs:
-                    ui.print_error("解压后未找到WebUI目录")
+                    ui.print_error("解压后未找到控制面板目录")
                     return None
-                
+
                 source_dir = os.path.join(extract_dir, extracted_dirs[0])
+                target_dir = os.path.join(install_dir, self.dashboard_dir_name)
                 
-                # 创建WebUI目录
-                webui_dir = os.path.join(install_dir, "WebUI")
-                os.makedirs(webui_dir, exist_ok=True)
+                # 安全地删除已存在的目录，处理文件占用问题
+                if os.path.exists(target_dir):
+                    ui.print_info("检测到已有控制面板目录，正在清理...")
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            shutil.rmtree(target_dir)
+                            break
+                        except PermissionError as e:
+                            if attempt < max_retries - 1:
+                                ui.print_warning(f"目录清理失败（尝试 {attempt + 1}/{max_retries}），2秒后重试...")
+                                logger.warning("目录删除失败，将重试", error=str(e), attempt=attempt+1)
+                                time.sleep(2)
+                            else:
+                                ui.print_error("无法删除旧的控制面板目录，可能有进程正在使用文件。")
+                                ui.print_info("提示：请关闭所有相关的终端窗口、Node.js进程或IDE，然后重试。")
+                                logger.error("目录删除失败", error=str(e))
+                                raise
                 
-                # 复制WebUI文件
-                ui.print_info("正在安装WebUI文件...")
+                os.makedirs(target_dir, exist_ok=True)
+
+                ui.print_info("正在拷贝控制面板文件...")
                 for item in os.listdir(source_dir):
                     src_path = os.path.join(source_dir, item)
-                    dst_path = os.path.join(webui_dir, item)
-                    
+                    dst_path = os.path.join(target_dir, item)
                     if os.path.isfile(src_path):
                         shutil.copy2(src_path, dst_path)
                     elif os.path.isdir(src_path):
-                        if os.path.exists(dst_path):
-                            shutil.rmtree(dst_path)
                         shutil.copytree(src_path, dst_path)
-                
-                ui.print_success("WebUI下载完成")
-                logger.info("WebUI下载成功", path=webui_dir)
-                return webui_dir
-                
+
+                ui.print_success("控制面板源码安装完成")
+                logger.info("控制面板下载成功", path=target_dir)
+                return target_dir
+
         except Exception as e:
-            ui.print_error(f"WebUI下载失败：{str(e)}")
-            logger.error("WebUI下载失败", error=str(e))
+            ui.print_error(f"控制面板下载失败：{str(e)}")
+            logger.error("控制面板下载失败", error=str(e))
             return None
     
-    def install_webui_dependencies(self, webui_dir: str, venv_path: str = "") -> bool:
-        """安装WebUI前端依赖"""
+    def install_webui_dependencies(self, dashboard_dir: str, venv_path: str = "") -> bool:
+        """安装MaiBot控制面板依赖，使用 npm + bun。"""
         try:
-            ui.print_info("正在安装WebUI前端依赖...")
-            
-            # 检查前端依赖文件
-            package_json_path = os.path.join(webui_dir, "http_server", "package.json")
-            if not os.path.exists(package_json_path):
-                ui.print_warning("未找到 http_server/package.json，跳过前端依赖安装")
-                return True
-            
-            # 安装前端依赖
-            ui.print_info("正在安装前端依赖 (npm)...")
-            original_cwd = os.getcwd()
-            try:
-                os.chdir(os.path.join(webui_dir, "http_server"))
-                result = subprocess.run(
-                    ["npm", "install"],
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    shell=True
-                )
-                if result.returncode == 0:
-                    ui.print_success("✅ 前端依赖安装完成")
-                    logger.info("前端依赖安装成功")
-                    return True
-                else:
-                    ui.print_error(f"❌ 前端依赖安装失败：{result.stderr}")
-                    logger.error("前端依赖安装失败", error=result.stderr)
-                    return False
-            except Exception as e:
-                ui.print_error(f"安装前端依赖时发生异常：{str(e)}")
-                logger.error("安装前端依赖异常", error=str(e))
+            ui.print_info("正在安装MaiBot控制面板依赖...")
+
+            npm_cmd = self._resolve_command(["npm", "npm.cmd"])
+            if not npm_cmd:
+                ui.print_error("未找到 npm 命令，无法继续安装控制面板依赖")
                 return False
-            finally:
-                os.chdir(original_cwd)
+
+            bun_cmd = self._find_bun_executable(dashboard_dir)
+            if bun_cmd:
+                ui.print_info(f"检测到已有 bun 可执行文件: {bun_cmd}")
+            else:
+                npm_install_ok, _ = self._run_command(
+                    [npm_cmd, "install", "bun"],
+                    cwd=dashboard_dir,
+                    description="安装 bun 运行时",
+                )
+                if not npm_install_ok:
+                    ui.print_warning("npm install bun 失败，直接尝试运行 bun install。")
+                bun_cmd = self._find_bun_executable(dashboard_dir)
+
+            npx_cmd = self._resolve_command(["npx", "npx.cmd"])
+
+            if bun_cmd:
+                bun_command = [bun_cmd, "install"]
+            elif npx_cmd:
+                ui.print_warning("未找到 bun 可执行文件，使用 npx bun install")
+                bun_command = [npx_cmd, "--yes", "bun", "install"]
+            else:
+                ui.print_warning("未找到 bun 可执行文件或 npx，尝试使用 npm exec bun (可能需要较长时间)")
+                bun_command = [npm_cmd, "exec", "bun", "install"]
+
+            success, _ = self._run_command(bun_command, cwd=dashboard_dir, description="执行 bun install")
+            return success
+
         except Exception as e:
-            ui.print_error(f"安装WebUI依赖时发生异常：{str(e)}")
-            logger.error("安装WebUI依赖异常", error=str(e))
+            ui.print_error(f"安装控制面板依赖时发生异常：{str(e)}")
+            logger.error("安装控制面板依赖异常", error=str(e))
             return False
     
     def install_webui_backend_dependencies(self, webui_dir: str, venv_path: str = "") -> bool:
-        """安装WebUI后端依赖"""
-        try:
-            ui.print_info("正在安装WebUI后端依赖...")
-            
-            # 检查后端依赖文件
-            requirements_path = os.path.join(webui_dir, "requirements.txt")
-            if not os.path.exists(requirements_path):
-                ui.print_warning("未找到 requirements.txt，跳过后端依赖安装")
-                return True
-            
-            # 构建pip安装命令
-            pip_cmd = ["pip", "install", "-r", requirements_path]
-            
-            # 如果提供了虚拟环境路径，使用虚拟环境的pip
-            if venv_path:
-                if platform.system() == "Windows":
-                    venv_pip = os.path.join(venv_path, "Scripts", "pip.exe")
-                else:
-                    venv_pip = os.path.join(venv_path, "bin", "pip")
-                
-                if os.path.exists(venv_pip):
-                    pip_cmd[0] = venv_pip
-                    ui.print_info(f"使用虚拟环境pip: {venv_pip}")
-            
-            ui.print_info("正在安装后端Python依赖...")
-            result = subprocess.run(
-                pip_cmd,
-                capture_output=True,
-                text=True,
-                timeout=600,
-                shell=True  # 在Windows上使用shell
-            )
-            
-            if result.returncode == 0:
-                ui.print_success("✅ 后端依赖安装完成")
-                logger.info("后端依赖安装成功")
-                return True
-            else:
-                ui.print_error(f"❌ 后端依赖安装失败：{result.stderr}")
-                logger.error("后端依赖安装失败", error=result.stderr)
-                return False
-                
-        except subprocess.TimeoutExpired:
-            ui.print_error("❌ 后端依赖安装超时")
-            logger.error("后端依赖安装超时")
-            return False
-        except Exception as e:
-            ui.print_error(f"安装WebUI后端依赖时发生异常：{str(e)}")
-            logger.error("安装WebUI后端依赖异常", error=str(e))
-            return False
+        """控制面板当前无独立后端依赖，直接返回成功。"""
+        ui.print_info("控制面板无需额外后端依赖，已跳过。")
+        return True
 
     def check_and_install_webui(self, install_dir: str, venv_path: str = "") -> Tuple[bool, str]:
-        """检查并安装WebUI"""
+        """检查并安装MaiBot控制面板"""
         try:
-            ui.console.print("\n[🌐 WebUI安装选项]", style=ui.colors["primary"])
+            ui.console.print("\n[🌐 控制面板安装选项]", style=ui.colors["primary"])
             
-            # 询问是否安装WebUI
-            if not ui.confirm("是否安装MaiMbot WebUI？"):
-                ui.print_info("已跳过WebUI安装")
+            # 询问是否安装控制面板
+            if not ui.confirm("是否安装MaiBot控制面板？"):
+                ui.print_info("已跳过控制面板安装")
                 return True, ""
             
             # 检查Node.js环境
@@ -499,49 +516,49 @@ class WebUIInstaller:
             
             if not node_installed or not npm_installed:
                 ui.print_warning("未检测到Node.js或npm")
-                ui.print_info("WebUI需要Node.js环境支持")
+                ui.print_info("控制面板需要Node.js环境支持")
                 
                 if ui.confirm("是否自动安装Node.js？"):
                     if not self.install_nodejs():
-                        ui.print_error("Node.js安装失败，跳过WebUI安装")
+                        ui.print_error("Node.js安装失败，跳过控制面板安装")
                         return False, ""
                 else:
-                    ui.print_info("已跳过WebUI安装")
+                    ui.print_info("已跳过控制面板安装")
                     return True, ""
             else:
                 ui.print_success(f"Node.js环境检测通过: {node_version}")
                 ui.print_success(f"npm环境检测通过: {npm_version}")
             
-            # 选择WebUI分支
+            # 选择控制面板分支
             branch_info = self.show_webui_branch_menu()
             if not branch_info:
-                ui.print_info("已跳过WebUI安装")
+                ui.print_info("已跳过控制面板安装")
                 return True, ""
             
-            # 下载WebUI
+            # 下载控制面板
             webui_dir = self.download_webui(branch_info, install_dir)
             if not webui_dir:
-                ui.print_error("WebUI下载失败")
+                ui.print_error("控制面板下载失败")
                 return False, ""
             
-            # 安装WebUI前端依赖
+            # 安装控制面板依赖
             if not self.install_webui_dependencies(webui_dir, venv_path):
-                ui.print_warning("WebUI前端依赖安装失败，但WebUI文件已下载")
-                ui.print_info("可以稍后手动在WebUI目录中执行 npm install")
+                ui.print_warning("依赖安装失败，但控制面板文件已下载")
+                ui.print_info("可以稍后手动在控制面板目录中执行 npm install bun && bun install")
             
-            ui.print_success("✅ WebUI安装完成")
-            logger.info("WebUI安装完成", path=webui_dir)
+            ui.print_success("✅ 控制面板安装完成")
+            logger.info("控制面板安装完成", path=webui_dir)
             return True, webui_dir
             
         except Exception as e:
-            ui.print_error(f"WebUI安装失败：{str(e)}")
-            logger.error("WebUI安装失败", error=str(e))
+            ui.print_error(f"控制面板安装失败：{str(e)}")
+            logger.error("控制面板安装失败", error=str(e))
             return False, ""
     
     def install_webui_directly(self, install_dir: str, venv_path: str = "") -> Tuple[bool, str]:
-        """直接安装WebUI，不询问用户"""
+        """直接安装控制面板，不询问用户"""
         try:
-            ui.console.print("\n[🌐 WebUI安装]", style=ui.colors["primary"])
+            ui.console.print("\n[🌐 控制面板安装]", style=ui.colors["primary"])
             
             # 检查Node.js环境
             ui.print_info("检查Node.js环境...")
@@ -550,43 +567,43 @@ class WebUIInstaller:
             
             if not node_installed or not npm_installed:
                 ui.print_warning("未检测到Node.js或npm")
-                ui.print_info("WebUI需要Node.js环境支持")
+                ui.print_info("控制面板需要Node.js环境支持")
                 
                 if ui.confirm("是否自动安装Node.js？"):
                     if not self.install_nodejs():
-                        ui.print_error("Node.js安装失败，跳过WebUI安装")
+                        ui.print_error("Node.js安装失败，跳过控制面板安装")
                         return False, ""
                 else:
-                    ui.print_info("已跳过WebUI安装")
+                    ui.print_info("已跳过控制面板安装")
                     return False, ""
             else:
                 ui.print_success(f"Node.js环境检测通过: {node_version}")
                 ui.print_success(f"npm环境检测通过: {npm_version}")
             
-            # 选择WebUI分支
+            # 选择控制面板分支
             branch_info = self.show_webui_branch_menu()
             if not branch_info:
-                ui.print_info("已跳过WebUI安装")
+                ui.print_info("已跳过控制面板安装")
                 return False, ""
             
-            # 下载WebUI
+            # 下载控制面板
             webui_dir = self.download_webui(branch_info, install_dir)
             if not webui_dir:
-                ui.print_error("WebUI下载失败")
+                ui.print_error("控制面板下载失败")
                 return False, ""
             
-            # 安装WebUI依赖
+            # 安装控制面板依赖
             if not self.install_webui_dependencies(webui_dir, venv_path):
-                ui.print_warning("WebUI依赖安装失败，但WebUI文件已下载")
-                ui.print_info("可以稍后手动在WebUI目录中执行 npm install")
+                ui.print_warning("控制面板依赖安装失败，但文件已下载")
+                ui.print_info("可以稍后手动在控制面板目录中执行 npm install bun && bun install")
             
-            ui.print_success("✅ WebUI安装完成")
-            logger.info("WebUI安装完成", path=webui_dir)
+            ui.print_success("✅ 控制面板安装完成")
+            logger.info("控制面板安装完成", path=webui_dir)
             return True, webui_dir
             
         except Exception as e:
-            ui.print_error(f"WebUI安装失败：{str(e)}")
-            logger.error("WebUI安装失败", error=str(e))
+            ui.print_error(f"控制面板安装失败：{str(e)}")
+            logger.error("控制面板安装失败", error=str(e))
             return False, ""
 
 

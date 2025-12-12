@@ -299,16 +299,16 @@ class MaiMaiLauncher:
         """处理关于菜单"""
         ui.clear_screen()
         ui.console.print("===关于本程序===", style=ui.colors["primary"])
-        ui.console.print("麦麦启动器控制台 - 重构版", style=ui.colors["primary"])
+        ui.console.print("麦麦核心启动器控制台", style=ui.colors["primary"])
         ui.console.print("=================")
         
-        ui.console.print("版本：V4.0.0-重构版", style=ui.colors["info"])
-        ui.console.print("重构特性：", style=ui.colors["success"])
-        ui.console.print("  • 模块化设计", style="white")
-        ui.console.print("  • 结构化日志（structlog）", style="white")
-        ui.console.print("  • 丰富的UI界面（rich）", style="white")
+        ui.console.print("版本：V4.1.0-date", style=ui.colors["info"])
+        ui.console.print("新增亮点：", style=ui.colors["success"])
+        ui.console.print("  • 模块化部署逻辑", style="white")
+        ui.console.print("  • 精确的资源监控器", style="white")
+        ui.console.print("  • 丰富的可自定义UI界面（rich）", style="white")
         ui.console.print("  • 改进的错误处理", style="white")
-        ui.console.print("  • 更好的代码组织", style="white")
+        ui.console.print("  • 更多的新增功能", style="white")
         
         ui.console.print("\n技术栈：", style=ui.colors["info"])
         ui.console.print("  • Python 3.12.8", style="white")
@@ -317,13 +317,13 @@ class MaiMaiLauncher:
         ui.console.print("  • toml - 配置管理", style="white")        
         
         ui.console.print("\n开源许可：Apache License 2.0", style=ui.colors["secondary"])
-        ui.console.print("GitHub：https://github.com/xiaoCZX/MaiMbot-initiate", style="#46AEF8")
+        ui.console.print("GitHub：https://github.com/MaiCore-Start/MaiCore-Start", style="#46AEF8")
         ui.console.print("你喜欢的话，请给个Star支持一下哦~", style="white")
         ui.console.print("欢迎加入我们的社区！（我们的QQ群聊：1025509724）", style="white")
 
         ui.console.print("\n感谢以下为此项目做出贡献的开发者：", style=ui.colors["header"])
-        ui.console.print("  • 小城之雪 - 整个项目的提出者和主要开发者", style="white")
-        ui.console.print("  • 一闪 - 为此项目的重构提供了大量支持，以及webui安装支持", style="white")
+        ui.console.print("  • 小城之雪（xiaoCZX） - 整个项目的提出者和主要开发者", style="white")
+        ui.console.print("  • 一闪 - 为此项目的v4.0版本重构提供了大量支持", style="white")
         ui.console.print("  • 其他贡献者", style="white")
 
         ui.pause()

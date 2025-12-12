@@ -35,7 +35,7 @@ class VersionManager:
         self._cache_duration = 300  # 5分钟缓存
         
         # 支持的分支
-        self.supported_branches = ["main", "dev", "classical","master"]
+        self.supported_branches = ["main", "dev", "classical", "master"]
         
         # 离线模式标志
         self._offline_mode = False
@@ -156,11 +156,33 @@ class VersionManager:
             # 返回默认版本
             versions = self._get_default_versions()
         
+        # 按优先级排序，确保关键分支优先展示
+        versions = self._prioritize_versions(versions)
+
         # 更新缓存
         self._versions_cache = versions
         self._cache_timestamp = time.time()
         
         return versions
+
+    def _prioritize_versions(self, versions: List[Dict]) -> List[Dict]:
+        """Ensure priority branches (main/dev) appear at the top of the list."""
+        priority_order = ["main", "dev"]
+        priority_versions = []
+        remaining_versions = []
+        seen = set()
+
+        for version in versions:
+            name = version.get("name", "")
+            if version.get("type") == "branch" and name in priority_order:
+                if name not in seen:
+                    priority_versions.append(version)
+                    seen.add(name)
+            else:
+                remaining_versions.append(version)
+
+        priority_versions.sort(key=lambda v: priority_order.index(v.get("name")) if v.get("name") in priority_order else len(priority_order))
+        return priority_versions + remaining_versions
     
     def _get_default_versions(self) -> List[Dict]:
         """获取默认版本列表（离线或失败时使用）"""

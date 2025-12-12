@@ -3,8 +3,10 @@
 负责启动和管理麦麦实例及其相关组件。
 """
 import os
+import shutil
 import subprocess
 import time
+import webbrowser
 import structlog
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
@@ -465,40 +467,62 @@ class _WebUIComponent(_LaunchComponent):
     def check_enabled(self):
         self.is_enabled = self.config.get("install_options", {}).get("install_webui", False)
 
+    def _resolve_bun_command(self, webui_path: str) -> Optional[str]:
+        """Try to find a bun executable either globally or within the project."""
+        candidates = [
+            "bun.exe",
+            "bun.cmd",
+            "bun"
+        ] if os.name == "nt" else ["bun"]
+
+        for candidate in candidates:
+            resolved = shutil.which(candidate)
+            if resolved:
+                return resolved
+
+        local_bin = os.path.join(
+            webui_path,
+            "node_modules",
+            ".bin",
+            "bun.cmd" if os.name == "nt" else "bun"
+        )
+        if os.path.exists(local_bin):
+            return local_bin
+
+        return None
+
     def start(self, process_manager: _ProcessManager) -> bool:
         if not self.is_enabled:
             return True
         
-        ui.print_info("尝试启动 WebUI...")
+        ui.print_info("尝试启动 MaiBot 控制面板...")
         webui_path = self.config.get("webui_path", "")
         if not (webui_path and os.path.exists(webui_path)):
             ui.print_error("WebUI路径无效或不存在")
             return False
 
         version = self.config.get('version_path', 'N/A')
-        
-        # 1. 启动HTTP服务器
-        http_server_dir = os.path.join(webui_path, "http_server")
-        http_server_main = os.path.join(http_server_dir, "main.py")
-        if not os.path.exists(http_server_main):
-            ui.print_error("未找到 http_server/main.py，WebUI 启动失败")
-            return False
-        
-        python_cmd_http = MaiLauncher._get_python_command(self.config, http_server_dir)
-        if not process_manager.start_in_new_cmd(f"{python_cmd_http} main.py", http_server_dir, f"WebUI-HTTPServer - {version}"):
+        bun_cmd = self._resolve_bun_command(webui_path)
+        if bun_cmd:
+            bun_exec = f'"{bun_cmd}"'
+        else:
+            bun_exec = "bun"
+            ui.print_warning("未在系统中找到bun，将尝试直接执行 'bun run dev'。")
+
+        # 控制面板使用bun dev服务器，统一监听7999端口
+        command = f"{bun_exec} run dev -- --port 7999"
+        title = f"MaiBot 控制面板 - {version}"
+        process = process_manager.start_in_new_cmd(command, webui_path, title)
+        if not process:
             return False
 
-        # 2. 启动Adapter
-        adapter_dir = os.path.join(webui_path, "adapter")
-        adapter_main = os.path.join(adapter_dir, "maimai_http_adapter.py")
-        if not os.path.exists(adapter_main):
-            ui.print_error("未找到 adapter/maimai_http_adapter.py，WebUI 启动失败")
-            return False
-            
-        python_cmd_adapter = MaiLauncher._get_python_command(self.config, adapter_dir)
-        if not process_manager.start_in_new_cmd(f"{python_cmd_adapter} maimai_http_adapter.py", adapter_dir, f"WebUI-Adapter - {version}"):
-            return False
-            
+        url = "http://localhost:7999"
+        ui.print_info(f"正在打开浏览器访问 {url} ...")
+        try:
+            webbrowser.open(url)
+        except Exception as exc:
+            ui.print_warning(f"自动打开浏览器失败，请手动访问 {url} ({exc})")
+
         return True
 
 
@@ -667,6 +691,10 @@ class MaiLauncher:
                 "3": ("主程序+适配器+检查MongoDB", ["mai", "adapter", "mongodb"]),
                 "4": ("主程序+适配器+NapCatQQ+检查MongoDB", ["mai", "adapter", "napcat", "mongodb"]),
             }
+            # 如果控制面板可用，添加包含控制面板的启动选项
+            if self._components['webui'].is_enabled:
+                menu_options["5"] = ("主程序+适配器+控制面板", ["mai", "adapter", "webui"])
+                menu_options["6"] = ("主程序+适配器+NapCat+控制面板", ["mai", "adapter", "napcat", "webui"])
         elif bot_type == "MoFox_bot":
             menu_options = {
                 "1": ("主程序", ["mai"]),
@@ -719,6 +747,7 @@ class MaiLauncher:
             "2": ("适配器", "adapter"),
             "3": ("NapCatQQ", "napcat"),
             "4": ("检查MongoDB", "mongodb"),
+            "5": ("控制面板", "webui"),
         }
         
         for key, (text, comp_name) in advanced_options.items():

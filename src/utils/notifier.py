@@ -1,11 +1,33 @@
 """Windows notification utilities."""
 from __future__ import annotations
 
+import contextlib
+import io
 import logging
 import sys
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
+
+
+class _StderrFilter:
+    """过滤stderr输出，抑制win10toast库的WNDPROC/WPARAM警告。"""
+    def __init__(self, original_stderr):
+        self.original_stderr = original_stderr
+        self._suppressed_patterns = [
+            "WNDPROC return value cannot be converted to LRESULT",
+            "WPARAM is simple, so must be an int object",
+        ]
+    
+    def write(self, text):
+        if not any(pattern in text for pattern in self._suppressed_patterns):
+            self.original_stderr.write(text)
+    
+    def flush(self):
+        self.original_stderr.flush()
+    
+    def fileno(self):
+        return self.original_stderr.fileno()
 
 import structlog
 
@@ -32,6 +54,11 @@ class WindowsNotifier:
         self._toast: Optional[ToastNotifier] = None
         self._lock = threading.Lock()
         self._warned_unavailable = False
+        self._win11_disabled = False
+        
+        # 安装stderr过滤器以抑制win10toast后台线程的警告
+        if not isinstance(sys.stderr, _StderrFilter):
+            sys.stderr = _StderrFilter(sys.stderr)
 
     @staticmethod
     def _resolve_icon(icon_filename: str) -> Path:
@@ -67,27 +94,62 @@ class WindowsNotifier:
     def send(self, title: str, message: str, duration: int = 5) -> bool:
         """Send a notification if enabled."""
         if not self.is_enabled():
+            logger.info("Windows通知未启用，跳过发送", title=title)
             return False
         icon = str(self.icon_path) if self.icon_path.exists() else None
-        if self._send_win11(title, message, icon):
-            return True
+        message_preview = message if len(message) <= 120 else f"{message[:117]}..."
+        logger.info("尝试发送Windows通知", title=title, has_icon=bool(icon), message_preview=message_preview)
+
+        # 直接使用 Win10 toast（更稳定），不使用 Win11 toast（有已知问题）
         if self._send_win10(title, message, icon, duration):
+            logger.info("Windows通知发送成功", title=title, channel="win10")
             return True
+
+        logger.warning("Windows通知发送失败", title=title)
         if not self._warned_unavailable:
             logger.warning("Windows通知发送失败，请检查系统通知设置或相关依赖。")
             self._warned_unavailable = True
         return False
 
     def _send_win11(self, title: str, message: str, icon: Optional[str]) -> bool:
+        if self._win11_disabled:
+            return False
         if win11_toast is None or not sys.platform.startswith("win"):
             return False
         try:
             kwargs = {"icon": icon} if icon else {}
-            win11_toast(title, message, **kwargs)
-            return True
+            result = win11_toast(title, message, **kwargs)
+            if isinstance(result, bool):
+                return result
+            if result is None:
+                logger.warning("Win11通知返回空结果，将尝试备用通道", title=title)
+                self._win11_disabled = True
+                return False
+            self._log_win11_result(result)
+            logger.warning("Win11通知返回非布尔结果，将尝试备用通道", title=title)
+            self._win11_disabled = True
+            return False
         except Exception as exc:  # pragma: no cover - win11 specific
             logger.error("Win11通知发送失败", error=str(exc))
+            self._win11_disabled = True
             return False
+
+    def _log_win11_result(self, result: Any) -> None:
+        try:
+            if isinstance(result, (list, tuple)):
+                details = []
+                for item in result:
+                    value = getattr(item, "value", None)
+                    details.append(value if value is not None else repr(item))
+                logger.info("Win11通知返回结果", details=details)
+            else:
+                value = getattr(result, "value", None)
+                if value is not None:
+                    logger.info("Win11通知返回结果", details=value)
+                else:
+                    logger.info("Win11通知返回结果", details=repr(result))
+        except Exception as exc:
+            logger.debug("记录Win11通知结果时出错", error=str(exc))
 
     def _send_win10(self, title: str, message: str, icon: Optional[str], duration: int) -> bool:
         toaster = self._ensure_toast()

@@ -49,6 +49,7 @@ class DeploymentManager:
         notification_handler = None
         root_logger = None
         should_notify = windows_notifier.is_enabled()
+        logger.info("Windows通知开关状态", enabled=should_notify)
         if should_notify:
             notification_handler = NotificationLogHandler(windows_notifier, title="部署告警")
             notification_handler.setLevel(logging.WARNING)
@@ -71,6 +72,8 @@ class DeploymentManager:
 
             ui.print_info("🚀 开始部署流程...")
             logger.info("开始部署实例", config=deploy_config)
+            if should_notify:
+                windows_notifier.send("部署已开始", "部署时间可能较长，我们会在部署完成或出现意外情况时通知您。")
 
             # 部署流程
             paths = self._run_deployment_steps(deploy_config)
@@ -496,6 +499,8 @@ class DeploymentManager:
         ui.console.print("\n您现在可以通过主菜单的启动选项来运行该实例。", style=ui.colors["success"])
 
         # 询问是否打开配置文件
+        if windows_notifier.is_enabled():
+            windows_notifier.send("配置提醒", "是否立即在文本编辑器中打开主要配置文件？")
         if ui.confirm("\n是否立即在文本编辑器中打开主要配置文件？"):
             files_to_open = []
             
