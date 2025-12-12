@@ -82,6 +82,16 @@ class MoFoxBotDeployer(BaseDeployer):
 
             # 创建目标目录并复制文件
             target_dir = os.path.join(nickname_dir, "MoFox_bot")
+            
+            # 检查目标目录是否已存在
+            if os.path.exists(target_dir):
+                ui.print_warning(f"目标目录已存在，将先删除: {target_dir}")
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception as e:
+                    ui.print_error(f"删除旧目录失败: {str(e)}")
+                    return None
+            
             ui.print_info(f"正在安装MoFox_bot文件到: {target_dir}")
             shutil.copytree(source_dir, target_dir)
 

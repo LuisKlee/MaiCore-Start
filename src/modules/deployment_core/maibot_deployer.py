@@ -133,6 +133,15 @@ class MaiBotDeployer(BaseDeployer):
             os.makedirs(install_dir, exist_ok=True)
             target_dir = os.path.join(install_dir, "MaiBot")
             
+            # 检查目标目录是否已存在
+            if os.path.exists(target_dir):
+                ui.print_warning(f"目标目录已存在，将先删除: {target_dir}")
+                try:
+                    shutil.rmtree(target_dir)
+                except Exception as e:
+                    ui.print_error(f"删除旧目录失败: {str(e)}")
+                    return None
+            
             ui.print_info("正在安装MaiBot文件...")
             shutil.copytree(source_dir, target_dir)
             
