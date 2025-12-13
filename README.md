@@ -512,6 +512,8 @@ graph TD
 **更改Windows通知依赖**
 - 无需再依赖本地编译
 
+---
+
 <details>
 <summary><strong>📚 查看历史版本</strong></summary>
 
