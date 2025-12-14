@@ -82,11 +82,16 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         self.console.print("====>>部署类<<====")
         self.console.print(f" [F] {self.symbols['deployment']} 实例部署辅助系统", style=self.colors["error"])
         
+        self.console.print("====>>多Bot管理<<====")
+        self.console.print(f" [G] {self.symbols['rocket']} 多Bot管理系统", style=self.colors["success"])
+        self.console.print(f" [H] {self.symbols['status']} 本地Bot检测与接管", style=self.colors["info"])
+        self.console.print(f" [I] {self.symbols['config']} Bot端口管理", style=self.colors["warning"])
+        
         self.console.print("====>>进程管理<<====")
-        self.console.print(f" [G] {self.symbols['status']} 查看运行状态", style=self.colors["info"])
+        self.console.print(f" [J] {self.symbols['status']} 查看运行状态", style=self.colors["info"])
         
         self.console.print("====>>杂项类<<====")
-        self.console.print(f" [H] {self.symbols['config']} 杂项（关于/程序设置）", style=self.colors["info"])
+        self.console.print(f" [K] {self.symbols['config']} 杂项（关于/程序设置）", style=self.colors["info"])
         
         self.console.print("====>>退出类<<====")
         self.console.print(f" [Q] {self.symbols['quit']} 退出程序", style=self.colors["exit"])
@@ -226,7 +231,7 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
             self.console.print(f"  代理类型: [bold cyan]{proxy_type.upper()}[/bold cyan]")
             self.console.print(f"  代理地址: [bold cyan]{proxy_host}:{proxy_port}[/bold cyan]")
         elif proxy_enabled:
-            self.console.print(f"  [bold red]⚠ 代理已启用但配置不完整[/bold red]")
+            self.console.print("  [bold red]⚠ 代理已启用但配置不完整[/bold red]")
 
         # 显示当前颜色设置
         table = Table(title="当前主题颜色", show_header=True, header_style="bold magenta")

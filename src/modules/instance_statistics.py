@@ -323,6 +323,77 @@ class InstanceStatisticsManager:
             except Exception as e2:
                 ui.print_error(f"无法打开浏览器: {str(e2)}")
                 logger.error("打开浏览器失败", error=str(e2))
+    
+    def get_all_instances_data(self) -> Dict[str, Any]:
+        """获取所有实例的统计数据聚合"""
+        try:
+            from ..config_UI.config_UI import load_config_from_toml
+            
+            config = load_config_from_toml()
+            instances = {}
+            
+            for instance_name, instance_config in config.items():
+                if instance_name.lower() == 'global' or instance_name.lower() == 'default':
+                    continue
+                
+                mai_path = instance_config.get("mai_path", "")
+                if mai_path and os.path.isdir(mai_path):
+                    stat_file = os.path.join(mai_path, "maibot_statistics.html")
+                    if os.path.exists(stat_file):
+                        instances[instance_name] = {
+                            "display_name": instance_config.get("nickname", instance_name),
+                            "bot_type": instance_config.get("bot_type", "MaiBot"),
+                            "path": mai_path,
+                            "stat_file": stat_file
+                        }
+            
+            return instances
+        except Exception as e:
+            logger.warning("获取实例列表失败", error=str(e))
+            return {}
+    
+    def aggregate_statistics(self, instance_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        """聚合多个实例的统计数据"""
+        try:
+            result = {
+                "total_online_time": 0,
+                "total_messages": 0,
+                "total_replies": 0,
+                "total_requests": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "instances": {}
+            }
+            
+            all_instances = self.get_all_instances_data()
+            
+            if instance_names:
+                instances_to_aggregate = {k: v for k, v in all_instances.items() if k in instance_names}
+            else:
+                instances_to_aggregate = all_instances
+            
+            for instance_name, instance_info in instances_to_aggregate.items():
+                try:
+                    stat_file = instance_info.get("stat_file", "")
+                    if os.path.exists(stat_file):
+                        # 这里可以根据需要解析统计文件
+                        result["instances"][instance_name] = {
+                            "display_name": instance_info.get("display_name", instance_name),
+                            "bot_type": instance_info.get("bot_type", "MaiBot"),
+                            "available": True
+                        }
+                except Exception as e:
+                    logger.warning(f"聚合实例{instance_name}数据失败", error=str(e))
+                    result["instances"][instance_name] = {
+                        "display_name": instance_info.get("display_name", instance_name),
+                        "bot_type": instance_info.get("bot_type", "MaiBot"),
+                        "available": False
+                    }
+            
+            return result
+        except Exception as e:
+            logger.error("聚合统计数据失败", error=str(e))
+            return {"error": str(e)}
 
 
 # 全局实例

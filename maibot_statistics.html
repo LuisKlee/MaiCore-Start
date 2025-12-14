@@ -145,7 +145,10 @@
         <div class="toolbar">
             <h1 style="margin: 0;">MaiBot运行统计报告</h1>
             <div class="right">
-                <span class="info-item" style="margin: 0;"><strong>统计截止时间:</strong> 2025-11-29 21:40:52</span>
+                <select id="instanceSelector" onchange="switchInstance(this.value)" style="padding: 8px 12px; border-radius: 6px; border: 1px solid #e3daff; background-color: #fbf9ff; color: #4a3c75; cursor: pointer;">
+                    <option value="">选择Bot实例...</option>
+                </select>
+                <span class="info-item" style="margin: 0;"><strong>统计截止时间:</strong> <span id="statsTime">2025-11-29 21:40:52</span></span>
             </div>
         </div>
 
@@ -2855,6 +2858,80 @@
     </div>
 
 <script>
+    // 多Bot实例管理
+    let currentInstance = null;
+    let allInstances = {};
+    
+    // 获取所有Bot实例列表
+    function loadInstanceList() {
+        fetch('/api/instances')
+            .then(response => response.json())
+            .then(data => {
+                allInstances = data.instances || {};
+                updateInstanceSelector();
+                if (Object.keys(allInstances).length > 0) {
+                    const firstInstance = Object.keys(allInstances)[0];
+                    loadInstanceData(firstInstance);
+                }
+            })
+            .catch(error => {
+                console.error('加载实例列表失败:', error);
+                // 如果无法从API加载，使用当前页面数据
+            });
+    }
+    
+    // 更新实例选择器
+    function updateInstanceSelector() {
+        const selector = document.getElementById('instanceSelector');
+        selector.innerHTML = '<option value="">选择Bot实例...</option>';
+        for (const [name, instance] of Object.entries(allInstances)) {
+            const option = document.createElement('option');
+            option.value = name;
+            option.textContent = `${instance.display_name || name} (${instance.bot_type || 'Unknown'})`;
+            selector.appendChild(option);
+        }
+    }
+    
+    // 切换实例
+    function switchInstance(instanceName) {
+        if (instanceName) {
+            loadInstanceData(instanceName);
+        }
+    }
+    
+    // 加载实例数据
+    function loadInstanceData(instanceName) {
+        currentInstance = instanceName;
+        fetch(`/api/statistics/${instanceName}`)
+            .then(response => response.json())
+            .then(data => {
+                // 更新HTML中的数据
+                updateStatsDisplay(data);
+                // 更新选择器
+                document.getElementById('instanceSelector').value = instanceName;
+            })
+            .catch(error => {
+                console.error(`加载实例 ${instanceName} 的数据失败:`, error);
+            });
+    }
+    
+    // 更新统计显示
+    function updateStatsDisplay(data) {
+        // 更新统计时间
+        if (data.timestamp) {
+            document.getElementById('statsTime').textContent = new Date(data.timestamp).toLocaleString('zh-CN');
+        }
+        
+        // 更新KPI卡片（可根据需要扩展）
+        // 这里可以添加更多动态更新的逻辑
+    }
+    
+    // 页面加载时初始化
+    document.addEventListener('DOMContentLoaded', function() {
+        loadInstanceList();
+        updateAllMetricsCharts(allMetricsData['7d'], '7d');
+    });
+    
     let i, tab_content, tab_links;
     tab_content = document.getElementsByClassName("tab-content");
     tab_links = document.getElementsByClassName("tab-link");

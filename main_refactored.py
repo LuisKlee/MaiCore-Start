@@ -328,6 +328,54 @@ class MaiMaiLauncher:
 
         ui.pause()
 
+    def handle_multi_bot_menu(self):
+        """处理多Bot管理菜单"""
+        try:
+            from src.multi_bot.multi_bot_ui import MultiBotUI
+            ui.print_info("进入多Bot管理系统...")
+            multi_bot_ui = MultiBotUI()
+            multi_bot_ui.show_main_menu()
+        except ImportError as e:
+            ui.print_error(f"无法加载多Bot管理模块: {e}")
+            logger.error("加载多Bot管理模块失败", error=str(e))
+            ui.pause()
+        except Exception as e:
+            ui.print_error(f"多Bot管理出错: {e}")
+            logger.error("多Bot管理出错", error=str(e))
+            ui.pause()
+    
+    def handle_local_bot_detection(self):
+        """处理本地Bot检测与接管"""
+        try:
+            from src.multi_bot.local_bot_takeover_ui import LocalBotTakeoverUI
+            ui.print_info("启动本地Bot检测系统...")
+            takeover_ui = LocalBotTakeoverUI()
+            takeover_ui.show_detection_menu()
+        except ImportError as e:
+            ui.print_error(f"无法加载本地Bot检测模块: {e}")
+            logger.error("加载本地Bot检测模块失败", error=str(e))
+            ui.pause()
+        except Exception as e:
+            ui.print_error(f"本地Bot检测出错: {e}")
+            logger.error("本地Bot检测出错", error=str(e))
+            ui.pause()
+    
+    def handle_port_management(self):
+        """处理Bot端口管理"""
+        try:
+            from src.multi_bot.port_manager_ui import PortManagerUI
+            ui.print_info("启动端口管理系统...")
+            port_ui = PortManagerUI()
+            port_ui.show_port_menu()
+        except ImportError as e:
+            ui.print_error(f"无法加载端口管理模块: {e}")
+            logger.error("加载端口管理模块失败", error=str(e))
+            ui.pause()
+        except Exception as e:
+            ui.print_error(f"端口管理出错: {e}")
+            logger.error("端口管理出错", error=str(e))
+            ui.pause()
+    
     def handle_misc_menu(self):
         """处理杂项菜单"""
         while True:
@@ -1106,8 +1154,14 @@ class MaiMaiLauncher:
                 elif choice == "F":
                     self.handle_deployment_menu()
                 elif choice == "G":
-                    self.handle_process_status()
+                    self.handle_multi_bot_menu()
                 elif choice == "H":
+                    self.handle_local_bot_detection()
+                elif choice == "I":
+                    self.handle_port_management()
+                elif choice == "J":
+                    self.handle_process_status()
+                elif choice == "K":
                     self.handle_misc_menu()
                 elif choice == "R":
                     # 直接在主菜单刷新每日一言

@@ -31,6 +31,35 @@ def get_instance_root_path(instance_name: str) -> str:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"处理配置文件时出错: {e}")
 
+def get_all_instances() -> dict:
+    """获取所有实例的信息"""
+    try:
+        with open(CONFIG_FILE_PATH, 'r', encoding='utf-8') as f:
+            config = toml.load(f)
+        
+        instances = {}
+        configurations = config.get("configurations", {})
+        
+        for instance_name, instance_config in configurations.items():
+            if instance_name.lower() in ['global', 'default']:
+                continue
+                
+            bot_path = instance_config.get("mofox_path") or instance_config.get("mai_path") or instance_config.get("maibot_path")
+            
+            if bot_path and os.path.isdir(bot_path):
+                instances[instance_name] = {
+                    "display_name": instance_config.get("nickname", instance_name),
+                    "bot_type": instance_config.get("bot_type", "MaiBot"),
+                    "path": bot_path,
+                    "qq_account": instance_config.get("qq_account", "未设置")
+                }
+        
+        return instances
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        return {"error": str(e)}
+
 def parse_stats_html(html_path: str) -> dict:
     """解析 maibot_statistics.html 文件，提取图表数据。"""
     try:
@@ -59,6 +88,13 @@ def parse_stats_html(html_path: str) -> dict:
         raise HTTPException(status_code=500, detail=f"解析HTML文件时发生未知错误: {e}")
 
 
+@router.get("/instances", summary="获取所有Bot实例列表")
+def get_instances():
+    """获取所有可用的Bot实例列表"""
+    instances = get_all_instances()
+    return {"instances": instances}
+
+
 @router.get("/statistics/{instance_name}", summary="获取单个实例的统计数据")
 def get_instance_statistics(instance_name: str):
     """
@@ -74,14 +110,38 @@ def get_instance_statistics(instance_name: str):
     return parse_stats_html(stats_file_path)
 
 # 聚合所有实例数据的逻辑可以在这里进一步实现
-@router.get("/statistics/summary", summary="获取所有实例的统计数据摘要（待实现）")
+@router.get("/statistics/summary", summary="获取所有实例的统计数据摘要")
 def get_statistics_summary():
     """
-    （待实现）聚合所有可用的实例统计数据，为全局仪表盘提供数据。
+    聚合所有可用的实例统计数据，为全局仪表盘提供数据。
     """
-    # 示例逻辑：
-    # 1. 加载 config.toml 获取所有实例名称
-    # 2. 遍历每个实例，调用 get_instance_statistics
-    # 3. 将数据进行聚合（例如，加总所有实例的总花费）
-    # 4. 返回聚合后的数据
-    raise HTTPException(status_code=501, detail="此功能正在开发中。")
+    try:
+        instances = get_all_instances()
+        summary = {
+            "total_instances": len(instances),
+            "instances": {},
+            "aggregated_stats": {
+                "total_cost": 0.0,
+                "total_tokens": 0,
+                "total_messages": 0,
+                "total_requests": 0
+            }
+        }
+        
+        for instance_name in instances.keys():
+            try:
+                stats = get_instance_statistics(instance_name)
+                summary["instances"][instance_name] = {
+                    "status": "available",
+                    "data": stats
+                }
+            except Exception as e:
+                summary["instances"][instance_name] = {
+                    "status": "unavailable",
+                    "error": str(e)
+                }
+        
+        return summary
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"聚合统计数据时出错: {e}")
+

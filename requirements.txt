@@ -11,5 +11,5 @@ beautifulsoup4
 lxml
 psutil
 pystray==0.19.5
-pillow==10.4.0
+pillow>=12.0.0
 winotify
