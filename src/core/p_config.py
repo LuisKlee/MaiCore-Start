@@ -60,6 +60,11 @@ class PConfig:
                 "password": "",
                 "exclude_hosts": "localhost,127.0.0.1"
             }
+        },
+        "monitor": {
+            "data_refresh_interval": 2.0,
+            "ui_refresh_interval": 0.3,
+            "input_poll_interval": 0.05
         }
     }
 
