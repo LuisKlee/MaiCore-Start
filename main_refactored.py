@@ -355,6 +355,10 @@ class MaiMaiLauncher:
             on_exit_action = p_config_manager.get("on_exit.process_action", "ask")
             minimize_to_tray = p_config_manager.get("ui.minimize_to_tray", False)
             notifications_enabled = p_config_manager.get("notifications.windows_center_enabled", False)
+            monitor_cfg = p_config_manager.get("monitor", {}) or {}
+            monitor_data_interval = monitor_cfg.get("data_refresh_interval", 2.0)
+            monitor_ui_interval = monitor_cfg.get("ui_refresh_interval", 0.3)
+            monitor_input_interval = monitor_cfg.get("input_poll_interval", 0.05)
             
             # 获取代理配置
             proxy_config = p_config_manager.get_proxy_config()
@@ -369,13 +373,16 @@ class MaiMaiLauncher:
                 on_exit_action,
                 minimize_to_tray,
                 notifications_enabled,
+                monitor_data_interval,
+                monitor_ui_interval,
+                monitor_input_interval,
                 proxy_enabled,
                 proxy_type,
                 proxy_host,
                 proxy_port,
             )
             
-            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "T", "N", "P", "Q"])
+            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "T", "N", "M", "P", "Q"])
             
             if choice == "Q":
                 break
@@ -474,6 +481,33 @@ class MaiMaiLauncher:
             elif choice == "P":
                 # 配置网络代理
                 self.handle_proxy_config()
+
+            elif choice == "M":
+                # 调整监控刷新间隔
+                def _read_positive_float(prompt_text: str, current: float) -> float:
+                    while True:
+                        val = ui.get_input(prompt_text + f" (当前: {current})，回车保留当前: ")
+                        if not val.strip():
+                            return current
+                        try:
+                            num = float(val)
+                            if num > 0:
+                                return num
+                            ui.print_error("请输入大于0的数值。")
+                        except ValueError:
+                            ui.print_error("请输入有效数字。")
+
+                new_data_interval = _read_positive_float("数据刷新间隔(秒)", monitor_data_interval)
+                new_ui_interval = _read_positive_float("UI刷新间隔(秒)", monitor_ui_interval)
+                new_input_interval = _read_positive_float("输入轮询间隔(秒)", monitor_input_interval)
+
+                p_config_manager.set("monitor.data_refresh_interval", new_data_interval)
+                p_config_manager.set("monitor.ui_refresh_interval", new_ui_interval)
+                p_config_manager.set("monitor.input_poll_interval", new_input_interval)
+                p_config_manager.save()
+
+                ui.print_success("监控刷新间隔已更新。")
+                ui.pause()
 
     def handle_proxy_config(self):
         """处理代理配置"""
@@ -800,6 +834,25 @@ class MaiMaiLauncher:
         from rich.layout import Layout
         from rich.table import Table
 
+        # 调整刷新节奏，减少空转 CPU 占用；支持在程序设置中配置
+        monitor_cfg = p_config_manager.get("monitor", {}) or {}
+        DATA_REFRESH_INTERVAL = float(monitor_cfg.get("data_refresh_interval", 2.0) or 2.0)
+        UI_REFRESH_INTERVAL = float(monitor_cfg.get("ui_refresh_interval", 0.3) or 0.3)
+        INPUT_POLL_INTERVAL = float(monitor_cfg.get("input_poll_interval", 0.05) or 0.05)
+
+        # 合理下限保护，避免配置过小导致高占用
+        DATA_REFRESH_INTERVAL = max(0.5, DATA_REFRESH_INTERVAL)
+        UI_REFRESH_INTERVAL = max(0.1, UI_REFRESH_INTERVAL)
+        INPUT_POLL_INTERVAL = max(0.01, INPUT_POLL_INTERVAL)
+
+        # 预先构造不会变化的表格，避免循环内重复生成
+        base_command_table = Table.grid(padding=(0, 1))
+        base_command_table.add_column(style="bold yellow", width=15); base_command_table.add_column()
+        base_command_table.add_row("stop <PID>", "终止指定PID的进程"); base_command_table.add_row("restart <PID>", "重启指定PID的进程")
+        base_command_table.add_row("details <PID>", "查看指定PID的进程详情"); base_command_table.add_row("stopall", "终止所有受管进程")
+        base_command_table.add_row("q / quit", "退出状态监控")
+        base_command_table.add_row("Tab键", "补全指令或PID")
+
         should_quit_monitor = False
         while not should_quit_monitor:
             command_result = None
@@ -853,21 +906,14 @@ class MaiMaiLauncher:
 
                     # --- 2. 刷新进程数据 (定时) ---
                     data_changed = False
-                    if now - last_data_refresh > 2.0:
+                    if now - last_data_refresh > DATA_REFRESH_INTERVAL:
                         last_data_refresh = now
                         process_table = launcher.show_running_processes()
                         data_changed = True
 
                     # --- 3. 刷新UI (按需) ---
-                    if input_changed or data_changed or (now - last_ui_refresh > 0.5):
+                    if input_changed or data_changed or (now - last_ui_refresh > UI_REFRESH_INTERVAL):
                         last_ui_refresh = now
-                        
-                        command_table = Table.grid(padding=(0, 1))
-                        command_table.add_column(style="bold yellow", width=15); command_table.add_column()
-                        command_table.add_row("stop <PID>", "终止指定PID的进程"); command_table.add_row("restart <PID>", "重启指定PID的进程")
-                        command_table.add_row("details <PID>", "查看指定PID的进程详情"); command_table.add_row("stopall", "终止所有受管进程")
-                        command_table.add_row("q / quit", "退出状态监控")
-                        command_table.add_row("Tab键", "补全指令或PID")
 
                         suggestion = ""
                         parts = input_buffer.split(" ", 1)
@@ -883,14 +929,19 @@ class MaiMaiLauncher:
 
                         layout = Layout()
                         layout.split_column(
-                            Panel(command_table, title="[bold]可用命令[/bold]", border_style="dim"),
+                            Panel(base_command_table, title="[bold]可用命令[/bold]", border_style="dim"),
                             process_table,
                             Panel(input_text, border_style="cyan", title="输入命令", height=3)
                         )
                         live.update(layout)
                         live.refresh()
 
-                    time.sleep(0.02)
+                    # --- 4. 自适应休眠，减少空转 ---
+                    next_data_due = last_data_refresh + DATA_REFRESH_INTERVAL
+                    next_ui_due = last_ui_refresh + UI_REFRESH_INTERVAL
+                    next_tick = min(next_data_due, next_ui_due)
+                    sleep_for = max(0.0, min(INPUT_POLL_INTERVAL, next_tick - time.time()))
+                    time.sleep(sleep_for)
 
             # --- 4. Live循环结束后，处理命令结果 ---
             if isinstance(command_result, dict):

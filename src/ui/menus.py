@@ -173,6 +173,9 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         on_exit_action: str,
         minimize_to_tray_enabled: bool,
         notifications_enabled: bool,
+        monitor_data_interval: float,
+        monitor_ui_interval: float,
+        monitor_input_interval: float,
         proxy_enabled: bool = False,
         proxy_type: str = "http",
         proxy_host: str = "",
@@ -208,6 +211,12 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         notify_status = "开启" if notifications_enabled else "关闭"
         self.console.print(f"  Windows 通知中心推送: [bold yellow]{notify_status}[/bold yellow]")
 
+        # 显示监控刷新设置
+        self.console.print("\n[bold]进程监控刷新设置[/bold]")
+        self.console.print(f"  数据刷新间隔: [bold yellow]{monitor_data_interval:.2f}[/bold yellow] 秒")
+        self.console.print(f"  UI刷新间隔: [bold yellow]{monitor_ui_interval:.2f}[/bold yellow] 秒")
+        self.console.print(f"  输入轮询间隔: [bold yellow]{monitor_input_interval:.2f}[/bold yellow] 秒")
+
         # 显示代理设置
         self.console.print("\n[bold]网络代理设置[/bold]")
         proxy_status = "已启用" if proxy_enabled else "未启用"
@@ -237,6 +246,7 @@ o&o        o&&&o `Y&bood&P'         &*`&&&&&P'    `&&&` `Y&&&``qo d&&&b      `&&
         self.console.print(f" [C] {self.symbols['edit']} 修改颜色 (输入选项数字)", style=self.colors["success"])
         self.console.print(f" [T] {self.symbols['edit']} 切换最小化到托盘", style=self.colors["secondary"])
         self.console.print(f" [N] {self.symbols['edit']} 切换Windows通知", style=self.colors["primary"])
+        self.console.print(f" [M] {self.symbols['edit']} 设置进程监控刷新间隔", style=self.colors["info"])
         self.console.print(f" [P] {self.symbols['config']} 配置网络代理", style=self.colors["info"])
         self.console.print(f" [R] {self.symbols['back']} 恢复默认设置", style=self.colors["error"])
         
