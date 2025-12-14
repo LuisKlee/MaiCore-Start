@@ -355,15 +355,34 @@ class MaiMaiLauncher:
             on_exit_action = p_config_manager.get("on_exit.process_action", "ask")
             minimize_to_tray = p_config_manager.get("ui.minimize_to_tray", False)
             notifications_enabled = p_config_manager.get("notifications.windows_center_enabled", False)
+            monitor_cfg = p_config_manager.get("monitor", {}) or {}
+            monitor_data_interval = monitor_cfg.get("data_refresh_interval", 2.0)
+            monitor_ui_interval = monitor_cfg.get("ui_refresh_interval", 0.3)
+            monitor_input_interval = monitor_cfg.get("input_poll_interval", 0.05)
+            
+            # 获取代理配置
+            proxy_config = p_config_manager.get_proxy_config()
+            proxy_enabled = proxy_config.get("enabled", False)
+            proxy_type = proxy_config.get("type", "http")
+            proxy_host = proxy_config.get("host", "")
+            proxy_port = proxy_config.get("port", "")
+            
             ui.show_program_settings_menu(
                 current_colors,
                 current_log_days,
                 on_exit_action,
                 minimize_to_tray,
                 notifications_enabled,
+                monitor_data_interval,
+                monitor_ui_interval,
+                monitor_input_interval,
+                proxy_enabled,
+                proxy_type,
+                proxy_host,
+                proxy_port,
             )
             
-            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "T", "N", "Q"])
+            choice = ui.get_choice("请选择操作", ["L", "E", "C", "R", "T", "N", "M", "P", "Q"])
             
             if choice == "Q":
                 break
@@ -457,6 +476,199 @@ class MaiMaiLauncher:
                 p_config_manager.save()
                 state_text = "开启" if new_value else "关闭"
                 ui.print_success(f"Windows 通知功能已{state_text}。")
+                ui.pause()
+            
+            elif choice == "P":
+                # 配置网络代理
+                self.handle_proxy_config()
+
+            elif choice == "M":
+                # 调整监控刷新间隔
+                def _read_positive_float(prompt_text: str, current: float) -> float:
+                    while True:
+                        val = ui.get_input(prompt_text + f" (当前: {current})，回车保留当前: ")
+                        if not val.strip():
+                            return current
+                        try:
+                            num = float(val)
+                            if num > 0:
+                                return num
+                            ui.print_error("请输入大于0的数值。")
+                        except ValueError:
+                            ui.print_error("请输入有效数字。")
+
+                new_data_interval = _read_positive_float("数据刷新间隔(秒)", monitor_data_interval)
+                new_ui_interval = _read_positive_float("UI刷新间隔(秒)", monitor_ui_interval)
+                new_input_interval = _read_positive_float("输入轮询间隔(秒)", monitor_input_interval)
+
+                p_config_manager.set("monitor.data_refresh_interval", new_data_interval)
+                p_config_manager.set("monitor.ui_refresh_interval", new_ui_interval)
+                p_config_manager.set("monitor.input_poll_interval", new_input_interval)
+                p_config_manager.save()
+
+                ui.print_success("监控刷新间隔已更新。")
+                ui.pause()
+
+    def handle_proxy_config(self):
+        """处理代理配置"""
+        try:
+            from src.utils.proxy_manager import proxy_manager
+        except ImportError:
+            ui.print_error("代理管理模块不可用，请检查安装。")
+            ui.pause()
+            return
+        
+        while True:
+            ui.clear_screen()
+            
+            # 获取当前代理配置
+            proxy_info = proxy_manager.get_proxy_info()
+            
+            # 显示代理配置菜单
+            ui.menus.show_proxy_config_menu(
+                proxy_enabled=proxy_info.get("enabled", False),
+                proxy_type=proxy_info.get("type", "http"),
+                proxy_host=proxy_info.get("host", ""),
+                proxy_port=proxy_info.get("port", ""),
+                proxy_username=proxy_info.get("username", ""),
+                has_password=proxy_info.get("has_password", False),
+                exclude_hosts=proxy_info.get("exclude_hosts", ""),
+            )
+            
+            choice = ui.get_input("请选择操作: ").upper()
+            
+            if choice == "Q":
+                break
+            
+            elif choice == "E":
+                # 启用代理
+                if not proxy_info.get("host") or not proxy_info.get("port"):
+                    ui.print_warning("请先设置代理主机和端口！")
+                    ui.pause()
+                    continue
+                proxy_manager.update_config(enabled=True)
+                ui.print_success("代理已启用。")
+                ui.pause()
+            
+            elif choice == "D":
+                # 禁用代理
+                proxy_manager.update_config(enabled=False)
+                ui.print_success("代理已禁用。")
+                ui.pause()
+            
+            elif choice == "1":
+                # 设置代理类型
+                ui.print_info("支持的代理类型：HTTP、HTTPS、SOCKS5、SOCKS4")
+                proxy_type = ui.get_input("请输入代理类型 [http/https/socks5/socks4]: ").lower()
+                if proxy_type in ["http", "https", "socks5", "socks4"]:
+                    proxy_manager.update_config(type=proxy_type)
+                    ui.print_success(f"代理类型已设置为: {proxy_type.upper()}")
+                else:
+                    ui.print_error("无效的代理类型。")
+                ui.pause()
+            
+            elif choice == "2":
+                # 设置代理主机
+                host = ui.get_input("请输入代理主机地址 (例如: 127.0.0.1): ").strip()
+                if host:
+                    proxy_manager.update_config(host=host)
+                    ui.print_success(f"代理主机已设置为: {host}")
+                else:
+                    ui.print_error("主机地址不能为空。")
+                ui.pause()
+            
+            elif choice == "3":
+                # 设置代理端口
+                port = ui.get_input("请输入代理端口 (例如: 7890): ").strip()
+                if port.isdigit():
+                    proxy_manager.update_config(port=port)
+                    ui.print_success(f"代理端口已设置为: {port}")
+                else:
+                    ui.print_error("端口必须是数字。")
+                ui.pause()
+            
+            elif choice == "4":
+                # 设置用户名
+                username = ui.get_input("请输入用户名 (留空则不使用): ").strip()
+                proxy_manager.update_config(username=username)
+                if username:
+                    ui.print_success(f"用户名已设置为: {username}")
+                else:
+                    ui.print_success("已清除用户名。")
+                ui.pause()
+            
+            elif choice == "5":
+                # 设置密码
+                import getpass
+                password = getpass.getpass("请输入密码 (输入时不显示): ").strip()
+                proxy_manager.update_config(password=password)
+                if password:
+                    ui.print_success("密码已设置。")
+                else:
+                    ui.print_success("已清除密码。")
+                ui.pause()
+            
+            elif choice == "6":
+                # 设置排除主机
+                ui.print_info("不使用代理的主机列表，用逗号分隔")
+                ui.print_info("例如: localhost,127.0.0.1,*.local")
+                exclude = ui.get_input("请输入排除主机列表: ").strip()
+                if exclude:
+                    proxy_manager.update_config(exclude_hosts=exclude)
+                    ui.print_success(f"排除主机已设置为: {exclude}")
+                else:
+                    ui.print_error("排除主机列表不能为空。")
+                ui.pause()
+            
+            elif choice == "T":
+                # 测试代理连接
+                ui.print_info("正在测试代理连接...")
+                result = proxy_manager.test_connection("https://www.baidu.com")
+                
+                if result.get("success"):
+                    ui.print_success(result.get("message", "连接成功"))
+                else:
+                    ui.print_error(result.get("message", "连接失败"))
+                ui.pause()
+            
+            elif choice == "C":
+                # 快速配置 Clash
+                proxy_manager.update_config(
+                    type="http",
+                    host="127.0.0.1",
+                    port="7890",
+                    username="",
+                    password="",
+                )
+                ui.print_success("已配置为 Clash 默认代理 (HTTP 127.0.0.1:7890)")
+                ui.pause()
+            
+            elif choice == "V":
+                # 快速配置 V2rayN
+                proxy_manager.update_config(
+                    type="socks5",
+                    host="127.0.0.1",
+                    port="10808",
+                    username="",
+                    password="",
+                )
+                ui.print_success("已配置为 V2rayN 默认代理 (SOCKS5 127.0.0.1:10808)")
+                ui.pause()
+            
+            elif choice == "S":
+                # 快速配置 Shadowsocks
+                proxy_manager.update_config(
+                    type="socks5",
+                    host="127.0.0.1",
+                    port="1080",
+                    username="",
+                    password="",
+                )
+                ui.print_success("已配置为 Shadowsocks 默认代理 (SOCKS5 127.0.0.1:1080)")
+                ui.pause()
+            
+            else:
+                ui.print_error("无效的选项。")
                 ui.pause()
 
     def handle_component_download(self):
@@ -622,6 +834,25 @@ class MaiMaiLauncher:
         from rich.layout import Layout
         from rich.table import Table
 
+        # 调整刷新节奏，减少空转 CPU 占用；支持在程序设置中配置
+        monitor_cfg = p_config_manager.get("monitor", {}) or {}
+        DATA_REFRESH_INTERVAL = float(monitor_cfg.get("data_refresh_interval", 2.0) or 2.0)
+        UI_REFRESH_INTERVAL = float(monitor_cfg.get("ui_refresh_interval", 0.3) or 0.3)
+        INPUT_POLL_INTERVAL = float(monitor_cfg.get("input_poll_interval", 0.05) or 0.05)
+
+        # 合理下限保护，避免配置过小导致高占用
+        DATA_REFRESH_INTERVAL = max(0.5, DATA_REFRESH_INTERVAL)
+        UI_REFRESH_INTERVAL = max(0.1, UI_REFRESH_INTERVAL)
+        INPUT_POLL_INTERVAL = max(0.01, INPUT_POLL_INTERVAL)
+
+        # 预先构造不会变化的表格，避免循环内重复生成
+        base_command_table = Table.grid(padding=(0, 1))
+        base_command_table.add_column(style="bold yellow", width=15); base_command_table.add_column()
+        base_command_table.add_row("stop <PID>", "终止指定PID的进程"); base_command_table.add_row("restart <PID>", "重启指定PID的进程")
+        base_command_table.add_row("details <PID>", "查看指定PID的进程详情"); base_command_table.add_row("stopall", "终止所有受管进程")
+        base_command_table.add_row("q / quit", "退出状态监控")
+        base_command_table.add_row("Tab键", "补全指令或PID")
+
         should_quit_monitor = False
         while not should_quit_monitor:
             command_result = None
@@ -675,21 +906,14 @@ class MaiMaiLauncher:
 
                     # --- 2. 刷新进程数据 (定时) ---
                     data_changed = False
-                    if now - last_data_refresh > 2.0:
+                    if now - last_data_refresh > DATA_REFRESH_INTERVAL:
                         last_data_refresh = now
                         process_table = launcher.show_running_processes()
                         data_changed = True
 
                     # --- 3. 刷新UI (按需) ---
-                    if input_changed or data_changed or (now - last_ui_refresh > 0.5):
+                    if input_changed or data_changed or (now - last_ui_refresh > UI_REFRESH_INTERVAL):
                         last_ui_refresh = now
-                        
-                        command_table = Table.grid(padding=(0, 1))
-                        command_table.add_column(style="bold yellow", width=15); command_table.add_column()
-                        command_table.add_row("stop <PID>", "终止指定PID的进程"); command_table.add_row("restart <PID>", "重启指定PID的进程")
-                        command_table.add_row("details <PID>", "查看指定PID的进程详情"); command_table.add_row("stopall", "终止所有受管进程")
-                        command_table.add_row("q / quit", "退出状态监控")
-                        command_table.add_row("Tab键", "补全指令或PID")
 
                         suggestion = ""
                         parts = input_buffer.split(" ", 1)
@@ -705,14 +929,19 @@ class MaiMaiLauncher:
 
                         layout = Layout()
                         layout.split_column(
-                            Panel(command_table, title="[bold]可用命令[/bold]", border_style="dim"),
+                            Panel(base_command_table, title="[bold]可用命令[/bold]", border_style="dim"),
                             process_table,
                             Panel(input_text, border_style="cyan", title="输入命令", height=3)
                         )
                         live.update(layout)
                         live.refresh()
 
-                    time.sleep(0.02)
+                    # --- 4. 自适应休眠，减少空转 ---
+                    next_data_due = last_data_refresh + DATA_REFRESH_INTERVAL
+                    next_ui_due = last_ui_refresh + UI_REFRESH_INTERVAL
+                    next_tick = min(next_data_due, next_ui_due)
+                    sleep_for = max(0.0, min(INPUT_POLL_INTERVAL, next_tick - time.time()))
+                    time.sleep(sleep_for)
 
             # --- 4. Live循环结束后，处理命令结果 ---
             if isinstance(command_result, dict):

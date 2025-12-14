@@ -68,6 +68,13 @@ class UI:
         on_exit_action: str,
         minimize_to_tray_enabled: bool,
         notifications_enabled: bool,
+        monitor_data_interval: float,
+        monitor_ui_interval: float,
+        monitor_input_interval: float,
+        proxy_enabled: bool = False,
+        proxy_type: str = "http",
+        proxy_host: str = "",
+        proxy_port: str = "",
     ):
         """显示程序设置菜单"""
         self.clear_screen()
@@ -78,6 +85,13 @@ class UI:
             on_exit_action,
             minimize_to_tray_enabled,
             notifications_enabled,
+            monitor_data_interval,
+            monitor_ui_interval,
+            monitor_input_interval,
+            proxy_enabled,
+            proxy_type,
+            proxy_host,
+            proxy_port,
         )
 
     def show_plugin_menu(self):

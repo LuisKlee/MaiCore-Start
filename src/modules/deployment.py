@@ -188,7 +188,7 @@ class DeploymentManager:
         default_install_dir = os.path.join(os.getcwd(), "instances")
         ui.print_info(f"默认安装目录: {default_install_dir}")
         while True:
-            install_dir_input = ui.get_input("请输入安装目录（留空使用默认）: ").strip()
+            install_dir_input = ui.get_input("请输入安装目录）: ").strip()
             install_dir = install_dir_input if install_dir_input else default_install_dir
             is_valid, message = validate_path(install_dir)
             if is_valid:
@@ -201,10 +201,55 @@ class DeploymentManager:
             else:
                 ui.print_error(f"路径无效: {message}")
 
-        # 实例名称
-        nickname = ui.get_input("请输入实例名称: ").strip()
-        if not nickname:
-            nickname = f"{bot_type}_instance"
+        # 实例名称（带冲突检测）
+        while True:
+            nickname_input = ui.get_input("请输入实例名称）: ").strip()
+            
+            # 如果输入为空，自动生成不冲突的默认名称
+            if not nickname_input:
+                base_nickname = f"{bot_type}_instance"
+                nickname = base_nickname
+                counter = 1
+                # 自动寻找不冲突的名称
+                while os.path.exists(os.path.join(install_dir, nickname)):
+                    nickname = f"{base_nickname}_{counter}"
+                    counter += 1
+                ui.print_info(f"使用默认实例名称: {nickname}")
+                break
+            else:
+                nickname = nickname_input
+            
+            # 检查昵称目录是否已存在
+            nickname_dir = os.path.join(install_dir, nickname)
+            if os.path.exists(nickname_dir):
+                # 检查目录是否为空
+                if os.listdir(nickname_dir):
+                    ui.print_warning(f"⚠️ 目录 '{nickname_dir}' 已存在且不为空")
+                    ui.console.print("该目录包含以下内容：", style="yellow")
+                    for item in os.listdir(nickname_dir)[:5]:  # 只显示前5个
+                        ui.console.print(f"  • {item}", style="yellow")
+                    if len(os.listdir(nickname_dir)) > 5:
+                        ui.console.print(f"  ... 还有 {len(os.listdir(nickname_dir)) - 5} 个项目", style="yellow")
+                    
+                    if ui.confirm("是否清空该目录并继续？"):
+                        try:
+                            shutil.rmtree(nickname_dir)
+                            ui.print_success("已清空目录")
+                            break
+                        except Exception as e:
+                            ui.print_error(f"清空目录失败: {str(e)}")
+                            ui.print_info("请输入其他实例名称")
+                            continue
+                    else:
+                        ui.print_info("请输入其他实例名称")
+                        continue
+                else:
+                    # 目录存在但为空，可以使用
+                    ui.print_info(f"将使用现有空目录: {nickname_dir}")
+                    break
+            else:
+                # 目录不存在，可以使用
+                break
 
         # 用户序列号（用于识别实例）
         existing_configs = config_manager.get_all_configurations()
@@ -498,9 +543,10 @@ class DeploymentManager:
         ui.console.print("4. 如安装了NapCat，请配置QQ登录和WebSocket连接参数。", style=ui.colors["attention"])
         ui.console.print("\n您现在可以通过主菜单的启动选项来运行该实例。", style=ui.colors["success"])
 
-        # 询问是否打开配置文件
+        # 询问是否打开配置文件 - 在询问前发送通知
         if windows_notifier.is_enabled():
-            windows_notifier.send("配置提醒", "是否立即在文本编辑器中打开主要配置文件？")
+            windows_notifier.send("部署即将完成", "是否在文本编辑器中打开配置文件？")
+        
         if ui.confirm("\n是否立即在文本编辑器中打开主要配置文件？"):
             files_to_open = []
             
