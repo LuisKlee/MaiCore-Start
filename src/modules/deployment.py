@@ -366,9 +366,10 @@ class DeploymentManager:
                 paths["adapter_path"] = "内置适配器"
         elif bot_type == "MoFox_bot":
             ui.print_info("检测到MoFox_bot，将记录内置适配器路径")
-            # 修改：适配器安装到主程序的同父级目录下，而非主程序目录下
-            bot_parent_dir = os.path.dirname(paths[bot_path_key])
-            paths["adapter_path"] = os.path.join(bot_parent_dir, "MoFox_bot-Adapter")
+            # 使用实例名称目录作为适配器路径，与新的目录结构保持一致
+            nickname = deploy_config.get("nickname", "MoFox_bot_instance")
+            instance_dir = os.path.join(deploy_config["install_dir"], nickname)
+            paths["adapter_path"] = os.path.join(instance_dir, "MoFox_bot-Adapter")
 
         # 步骤3：安装NapCat
         if deploy_config.get("install_napcat") and deploy_config.get("napcat_version"):
